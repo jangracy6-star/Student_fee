@@ -2,319 +2,188 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Student Fee Management System — Track payments, send WhatsApp reminders, and manage student fees effortlessly.">
-  <title>Student Fee Manager — Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="description" content="Add students and send automatic monthly WhatsApp fee reminders.">
+  <meta name="theme-color" content="#0d0d1a">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="FeeFlow">
+  <title>FeeFlow — Student Fee Reminders</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
 
-  <!-- ═══════ TOAST CONTAINER ═══════ -->
-  <div id="toast-container"></div>
+  <!-- ═══════ ICON SPRITE ═══════ -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-plus" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></symbol>
+      <symbol id="i-users" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
+      <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></symbol>
+      <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+      <symbol id="i-whatsapp" viewBox="0 0 24 24"><path fill="currentColor" stroke="none" d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path fill="currentColor" stroke="none" d="M12 0C5.373 0 0 5.373 0 12c0 2.625.846 5.059 2.284 7.034L.789 23.492a.5.5 0 0 0 .611.611l4.458-1.495A11.943 11.943 0 0 0 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 22c-2.357 0-4.542-.808-6.273-2.163l-.438-.35-3.172 1.063 1.063-3.172-.35-.438A9.955 9.955 0 0 1 2 12C2 6.486 6.486 2 12 2s10 4.486 10 10-4.486 10-10 10z"/></symbol>
+    </defs>
+  </svg>
+
+  <div id="toast-container" aria-live="polite"></div>
+
+  <!-- ═══════ LOGIN (only when ADMIN_PASSWORD is set) ═══════ -->
+  <div class="login-screen" id="login-screen" hidden>
+    <form class="login-card glass-card" id="login-form">
+      <span class="login-logo">🎓</span>
+      <h1 class="logo-title">FeeFlow</h1>
+      <p class="login-subtitle">Enter the admin password to continue</p>
+      <label class="field">
+        <span class="field-label">Password</span>
+        <input type="password" id="login-password" autocomplete="current-password" required />
+      </label>
+      <p class="form-error" id="login-error" hidden></p>
+      <button type="submit" class="btn btn-primary btn-block" id="btn-login">
+        <svg class="i"><use href="#i-lock"/></svg> Log in
+      </button>
+    </form>
+  </div>
 
   <!-- ═══════ HEADER ═══════ -->
-  <header class="header" id="header">
-    <div class="header-left">
-      <div class="logo">
-        <span class="logo-icon">🎓</span>
-        <div>
-          <h1 class="logo-title">FeeFlow</h1>
-          <p class="logo-subtitle">Student Fee Manager</p>
-        </div>
+  <header class="header">
+    <div class="logo">
+      <span class="logo-icon">🎓</span>
+      <div class="logo-text">
+        <span class="logo-title">FeeFlow</span>
+        <span class="logo-subtitle" id="institution-name">Student Fee Reminders</span>
       </div>
     </div>
-    <div class="header-right">
-      <div class="whatsapp-status" id="wa-status-badge" onclick="openQRModal()">
-        <span class="status-dot disconnected" id="wa-dot"></span>
-        <span class="status-text" id="wa-status-text">WhatsApp Offline</span>
-      </div>
-      <button class="btn btn-whatsapp" onclick="openQRModal()" id="btn-qr">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-        Scan QR
-      </button>
-    </div>
+    <button class="btn btn-icon btn-ghost" id="btn-logout" data-action="logout" title="Log out" aria-label="Log out" hidden>
+      <svg class="i"><use href="#i-logout"/></svg>
+    </button>
   </header>
 
-  <!-- ═══════ NAVIGATION TABS ═══════ -->
-  <nav class="tab-nav" id="tab-nav">
-    <button class="tab active" data-tab="students" onclick="switchTab('students')" id="tab-students">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-      Students
-    </button>
-    <button class="tab" data-tab="fees" onclick="switchTab('fees')" id="tab-fees">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
-      Fee Tracker
-    </button>
-    <button class="tab" data-tab="activity" onclick="switchTab('activity')" id="tab-activity">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-      Activity Log
-    </button>
-  </nav>
+  <main class="main-content">
 
-  <!-- ═══════ MAIN CONTENT ═══════ -->
-  <main class="main-content" id="main-content">
-
-    <!-- ──── STUDENTS TAB ──── -->
-    <section class="tab-content active" id="content-students">
-      <div class="section-header">
-        <div>
-          <h2 class="section-title">Student Directory</h2>
-          <p class="section-subtitle">Manage all student records and contact details</p>
-        </div>
-        <button class="btn btn-primary" onclick="openStudentModal()" id="btn-add-student">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          Add Student
-        </button>
+    <!-- ──── AUTOMATIC REMINDER STATUS ──── -->
+    <section class="reminder-card glass-card" id="reminder-card">
+      <div class="reminder-icon"><svg class="i"><use href="#i-whatsapp"/></svg></div>
+      <div class="reminder-info">
+        <span class="reminder-title" id="reminder-title">Monthly WhatsApp reminder</span>
+        <span class="reminder-text" id="reminder-text">Checking WhatsApp…</span>
+        <span class="reminder-last" id="reminder-last" hidden></span>
       </div>
-
-      <!-- Search Bar -->
-      <div class="search-bar">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <input type="text" placeholder="Search students by name, phone, or class..." id="student-search" oninput="filterStudents()" />
-      </div>
-
-      <!-- Student Count -->
-      <div class="summary-row">
-        <div class="summary-card glass-card">
-          <div class="summary-icon total">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-          </div>
-          <div class="summary-info">
-            <span class="summary-value" id="total-students-count">0</span>
-            <span class="summary-label">Total Students</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Students Table -->
-      <div class="table-container glass-card">
-        <table class="data-table" id="students-table">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Name</th>
-              <th>Phone</th>
-              <th>Class</th>
-              <th>Monthly Fee</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="students-tbody">
-            <tr class="empty-row">
-              <td colspan="6">
-                <div class="empty-state">
-                  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
-                  <p>No students added yet</p>
-                  <small>Click "Add Student" to get started</small>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <button class="btn btn-sm btn-whatsapp" id="btn-connect" data-action="open-qr">Connect</button>
     </section>
 
-    <!-- ──── FEE TRACKER TAB ──── -->
-    <section class="tab-content" id="content-fees">
-      <div class="section-header">
-        <div>
-          <h2 class="section-title">Fee Tracker</h2>
-          <p class="section-subtitle">Track and manage monthly fee payments</p>
-        </div>
-        <div class="fee-actions">
-          <div class="month-selector">
-            <label for="month-picker">Month:</label>
-            <input type="month" id="month-picker" onchange="loadFeeRecords()" />
-          </div>
-          <button class="btn btn-secondary" onclick="generateFees()" id="btn-generate-fees">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-            Generate Records
-          </button>
-          <button class="btn btn-whatsapp-send" onclick="sendReminders()" id="btn-send-reminders">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.625.846 5.059 2.284 7.034L.789 23.492a.5.5 0 0 0 .611.611l4.458-1.495A11.943 11.943 0 0 0 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 22c-2.357 0-4.542-.808-6.273-2.163l-.438-.35-3.172 1.063 1.063-3.172-.35-.438A9.955 9.955 0 0 1 2 12C2 6.486 6.486 2 12 2s10 4.486 10 10-4.486 10-10 10z"/></svg>
-            Send Reminders
-          </button>
-        </div>
+    <!-- ──── STUDENTS ──── -->
+    <div class="list-header">
+      <div>
+        <h1 class="page-title">Students</h1>
+        <p class="page-subtitle" id="students-count">—</p>
       </div>
+      <button class="btn btn-primary desktop-only" data-action="add-student">
+        <svg class="i"><use href="#i-plus"/></svg> Add Student
+      </button>
+    </div>
 
-      <!-- Fee Summary Cards -->
-      <div class="summary-row fee-summary">
-        <div class="summary-card glass-card">
-          <div class="summary-icon total">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
-          </div>
-          <div class="summary-info">
-            <span class="summary-value" id="fee-total">0</span>
-            <span class="summary-label">Total Students</span>
-          </div>
-        </div>
-        <div class="summary-card glass-card">
-          <div class="summary-icon paid">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-          </div>
-          <div class="summary-info">
-            <span class="summary-value" id="fee-paid">0</span>
-            <span class="summary-label">Paid</span>
-          </div>
-        </div>
-        <div class="summary-card glass-card">
-          <div class="summary-icon unpaid">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-          </div>
-          <div class="summary-info">
-            <span class="summary-value" id="fee-unpaid">0</span>
-            <span class="summary-label">Unpaid</span>
-          </div>
-        </div>
-        <div class="summary-card glass-card">
-          <div class="summary-icon collected">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-          </div>
-          <div class="summary-info">
-            <span class="summary-value" id="fee-collected">₹0</span>
-            <span class="summary-label">Collected</span>
-          </div>
-        </div>
-        <div class="summary-card glass-card">
-          <div class="summary-icon pending-amt">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-          </div>
-          <div class="summary-info">
-            <span class="summary-value" id="fee-pending">₹0</span>
-            <span class="summary-label">Pending</span>
-          </div>
-        </div>
-      </div>
+    <label class="search-bar" id="search-bar" hidden>
+      <svg class="i"><use href="#i-search"/></svg>
+      <input type="search" placeholder="Search students" id="student-search" autocomplete="off" />
+    </label>
 
-      <!-- Fee Table -->
-      <div class="table-container glass-card">
-        <table class="data-table" id="fees-table">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Student Name</th>
-              <th>Phone</th>
-              <th>Class</th>
-              <th>Fee Amount</th>
-              <th>Status</th>
-              <th>Paid Date</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody id="fees-tbody">
-            <tr class="empty-row">
-              <td colspan="8">
-                <div class="empty-state">
-                  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
-                  <p>No fee records for this month</p>
-                  <small>Click "Generate Records" to create entries</small>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <!-- ──── ACTIVITY LOG TAB ──── -->
-    <section class="tab-content" id="content-activity">
-      <div class="section-header">
-        <div>
-          <h2 class="section-title">Activity Log</h2>
-          <p class="section-subtitle">Track all system actions and changes</p>
-        </div>
-        <button class="btn btn-secondary" onclick="loadActivities()" id="btn-refresh-log">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-          Refresh
-        </button>
-      </div>
-
-      <div class="activity-list glass-card" id="activity-list">
-        <div class="empty-state">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-          <p>No activities recorded yet</p>
-          <small>Actions will appear here as you use the system</small>
-        </div>
-      </div>
-    </section>
-
+    <div class="card-list" id="students-list"></div>
   </main>
 
-  <!-- ═══════ STUDENT MODAL ═══════ -->
-  <div class="modal-overlay" id="student-modal">
-    <div class="modal glass-card">
-      <div class="modal-header">
-        <h3 id="student-modal-title">Add New Student</h3>
-        <button class="modal-close" onclick="closeStudentModal()" id="btn-close-student-modal">&times;</button>
+  <button class="fab" data-action="add-student" aria-label="Add student">
+    <svg class="i"><use href="#i-plus"/></svg>
+  </button>
+
+  <!-- ═══════ ADD / EDIT STUDENT ═══════ -->
+  <div class="sheet-overlay" id="student-sheet" role="dialog" aria-modal="true" aria-labelledby="student-sheet-title">
+    <div class="sheet">
+      <div class="sheet-handle"></div>
+      <div class="sheet-header">
+        <h3 id="student-sheet-title">Add Student</h3>
+        <button class="sheet-close" data-action="close-sheet" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
       </div>
-      <form id="student-form" onsubmit="saveStudent(event)">
+      <form id="student-form" class="sheet-body" novalidate>
         <input type="hidden" id="student-edit-id" />
-        <div class="form-group">
-          <label for="input-name">Full Name</label>
-          <input type="text" id="input-name" placeholder="e.g., Ravi Kumar" required />
-        </div>
-        <div class="form-group">
-          <label for="input-phone">Phone Number (with country code)</label>
-          <input type="text" id="input-phone" placeholder="e.g., 919876543210" required />
-        </div>
-        <div class="form-group">
-          <label for="input-class">Class / Course</label>
-          <input type="text" id="input-class" placeholder="e.g., Class 10 or B.Tech CS" required />
-        </div>
-        <div class="form-group">
-          <label for="input-fee">Monthly Fee (₹)</label>
-          <input type="number" id="input-fee" placeholder="e.g., 5000" min="0" step="0.01" required />
-        </div>
-        <div class="form-actions">
-          <button type="button" class="btn btn-ghost" onclick="closeStudentModal()">Cancel</button>
+        <label class="field">
+          <span class="field-label">Full name</span>
+          <input type="text" id="input-name" placeholder="e.g., Ravi Kumar" autocomplete="off" autocapitalize="words" maxlength="100" required />
+        </label>
+        <label class="field">
+          <span class="field-label">WhatsApp number</span>
+          <input type="tel" id="input-phone" placeholder="e.g., 9876543210" inputmode="tel" autocomplete="off" required />
+          <span class="field-hint">10-digit numbers get +91 automatically</span>
+        </label>
+        <label class="field">
+          <span class="field-label">Class / Course</span>
+          <input type="text" id="input-class" placeholder="e.g., Class 10" list="class-options" autocomplete="off" required />
+          <datalist id="class-options"></datalist>
+        </label>
+        <label class="field">
+          <span class="field-label">Monthly fee (₹)</span>
+          <input type="number" id="input-fee" placeholder="e.g., 5000" min="0" step="1" inputmode="decimal" required />
+        </label>
+        <p class="form-error" id="student-form-error" hidden></p>
+        <div class="sheet-actions">
+          <button type="button" class="btn btn-delete" data-action="delete-student" id="btn-delete-student" hidden>
+            <svg class="i"><use href="#i-trash"/></svg> Delete
+          </button>
+          <button type="button" class="btn btn-ghost" data-action="close-sheet" id="btn-cancel-student">Cancel</button>
           <button type="submit" class="btn btn-primary" id="btn-save-student">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-            Save Student
+            <svg class="i"><use href="#i-check"/></svg> Save
           </button>
         </div>
       </form>
     </div>
   </div>
 
-  <!-- ═══════ QR CODE MODAL ═══════ -->
-  <div class="modal-overlay" id="qr-modal">
-    <div class="modal glass-card qr-modal">
-      <div class="modal-header">
-        <h3>Connect WhatsApp</h3>
-        <button class="modal-close" onclick="closeQRModal()" id="btn-close-qr-modal">&times;</button>
+  <!-- ═══════ CONNECT WHATSAPP ═══════ -->
+  <div class="sheet-overlay" id="qr-sheet" role="dialog" aria-modal="true" aria-labelledby="qr-sheet-title">
+    <div class="sheet sheet-narrow">
+      <div class="sheet-handle"></div>
+      <div class="sheet-header">
+        <h3 id="qr-sheet-title">Connect WhatsApp</h3>
+        <button class="sheet-close" data-action="close-sheet" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
       </div>
-      <div class="qr-content" id="qr-content">
-        <div class="qr-loading">
-          <div class="spinner"></div>
-          <p>Waiting for QR code...</p>
-          <small>Make sure the server is running</small>
+      <div class="sheet-body">
+        <div class="qr-content" id="qr-content"></div>
+        <div class="qr-instructions" id="qr-instructions">
+          <p>1. Open <strong>WhatsApp</strong> on the phone that will send reminders</p>
+          <p>2. Go to <strong>Settings → Linked Devices</strong></p>
+          <p>3. Tap <strong>Link a Device</strong> and scan this code</p>
         </div>
-      </div>
-      <div class="qr-instructions">
-        <p>📱 Open <strong>WhatsApp</strong> on your phone</p>
-        <p>⚙️ Go to <strong>Settings → Linked Devices</strong></p>
-        <p>🔗 Tap <strong>"Link a Device"</strong> and scan the QR code</p>
+        <div class="sheet-actions" id="qr-actions" hidden>
+          <button type="button" class="btn btn-delete" data-action="wa-logout">
+            <svg class="i"><use href="#i-logout"/></svg> Unlink WhatsApp
+          </button>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- ═══════ CONFIRM DELETE MODAL ═══════ -->
-  <div class="modal-overlay" id="confirm-modal">
-    <div class="modal glass-card confirm-modal">
-      <div class="modal-header">
-        <h3>Confirm Delete</h3>
-        <button class="modal-close" onclick="closeConfirmModal()" id="btn-close-confirm">&times;</button>
+  <!-- ═══════ CONFIRM ═══════ -->
+  <div class="sheet-overlay" id="confirm-sheet" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div class="sheet sheet-narrow">
+      <div class="sheet-handle"></div>
+      <div class="sheet-header">
+        <h3 id="confirm-title">Are you sure?</h3>
       </div>
-      <p class="confirm-text" id="confirm-text">Are you sure you want to delete this student?</p>
-      <div class="form-actions">
-        <button class="btn btn-ghost" onclick="closeConfirmModal()">Cancel</button>
-        <button class="btn btn-danger" id="btn-confirm-delete" onclick="confirmDelete()">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-          Delete
-        </button>
+      <div class="sheet-body">
+        <p class="confirm-text" id="confirm-text"></p>
+        <div class="sheet-actions">
+          <button type="button" class="btn btn-ghost" id="btn-confirm-cancel">Cancel</button>
+          <button type="button" class="btn btn-primary" id="btn-confirm-ok">Confirm</button>
+        </div>
       </div>
     </div>
   </div>

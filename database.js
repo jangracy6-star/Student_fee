@@ -4,10 +4,18 @@
 require('dotenv').config();
 const { createClient } = require('@supabase/supabase-js');
 
+if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  console.error('\n❌ Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY.');
+  console.error('   Copy .env.example to .env and fill in your Supabase project details.\n');
+  process.exit(1);
+}
+
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
+
+const REMINDER_ACTION = 'Monthly Reminders';
 
 // ─── Student Operations ────────────────────────────────
 
@@ -43,7 +51,6 @@ async function createStudent(student) {
     .single();
   if (error) throw error;
 
-  // Log activity
   await logActivity('Student Added', `Added student: ${student.name}`);
   return data;
 }
@@ -80,124 +87,35 @@ async function deleteStudent(id) {
   return { success: true };
 }
 
-// ─── Fee Record Operations ─────────────────────────────
+// ─── Monthly Reminder Log ──────────────────────────────
+// Each month's reminder run is recorded in activity_log as
+// "Monthly Reminders" with details "Month: YYYY-MM | Sent: n, Failed: n".
 
-async function getFeeRecordsByMonth(month) {
+async function getLastReminderRun() {
   const { data, error } = await supabase
-    .from('fee_records')
-    .select(`
-      *,
-      students (
-        name,
-        phone,
-        class_name,
-        fee_amount
-      )
-    `)
-    .eq('month', month)
-    .order('student_id', { ascending: true });
+    .from('activity_log')
+    .select('*')
+    .eq('action', REMINDER_ACTION)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
   if (error) throw error;
-  return data;
-}
+  if (!data) return null;
 
-async function generateFeeRecords(month) {
-  // Get all students
-  const students = await getAllStudents();
-  if (students.length === 0) return { created: 0, skipped: 0 };
-
-  let created = 0;
-  let skipped = 0;
-
-  for (const student of students) {
-    // Check if record already exists
-    const { data: existing } = await supabase
-      .from('fee_records')
-      .select('id')
-      .eq('student_id', student.id)
-      .eq('month', month)
-      .maybeSingle();
-
-    if (existing) {
-      skipped++;
-      continue;
-    }
-
-    const { error } = await supabase
-      .from('fee_records')
-      .insert({
-        student_id: student.id,
-        month: month,
-        status: 'unpaid'
-      });
-
-    if (error) {
-      console.error(`Error creating fee record for ${student.name}:`, error);
-      skipped++;
-    } else {
-      created++;
-    }
-  }
-
-  await logActivity('Fee Records Generated', `Month: ${month} | Created: ${created}, Skipped: ${skipped}`);
-  return { created, skipped };
-}
-
-async function updateFeeStatus(recordId, status) {
-  const updateData = {
-    status: status,
-    paid_date: status === 'paid' ? new Date().toISOString() : null
+  const match = /Month: (\d{4}-\d{2}) \| Sent: (\d+), Failed: (\d+)/.exec(data.details || '');
+  return {
+    month: match?.[1] || null,
+    sent: Number(match?.[2] || 0),
+    failed: Number(match?.[3] || 0),
+    at: data.created_at
   };
-
-  const { data, error } = await supabase
-    .from('fee_records')
-    .update(updateData)
-    .eq('id', recordId)
-    .select(`
-      *,
-      students (name)
-    `)
-    .single();
-  if (error) throw error;
-
-  const statusEmoji = status === 'paid' ? '✅' : '❌';
-  await logActivity('Fee Status Updated', `${data.students.name} → ${statusEmoji} ${status} (${data.month})`);
-  return data;
 }
 
-async function getUnpaidStudents(month) {
-  const { data, error } = await supabase
-    .from('fee_records')
-    .select(`
-      *,
-      students (
-        name,
-        phone,
-        class_name,
-        fee_amount
-      )
-    `)
-    .eq('month', month)
-    .eq('status', 'unpaid');
-  if (error) throw error;
-  return data;
+async function logReminderRun(month, sent, failed) {
+  await logActivity(REMINDER_ACTION, `Month: ${month} | Sent: ${sent}, Failed: ${failed}`);
 }
 
-async function getFeeSummary(month) {
-  const records = await getFeeRecordsByMonth(month);
-  const total = records.length;
-  const paid = records.filter(r => r.status === 'paid').length;
-  const unpaid = records.filter(r => r.status === 'unpaid').length;
-  const collected = records
-    .filter(r => r.status === 'paid')
-    .reduce((sum, r) => sum + Number(r.students?.fee_amount || 0), 0);
-  const pending = records
-    .filter(r => r.status === 'unpaid')
-    .reduce((sum, r) => sum + Number(r.students?.fee_amount || 0), 0);
-
-  return { total, paid, unpaid, collected, pending };
-}
-
-// ─── Activity Log Operations ───────────────────────────
+// ─── Activity Log ──────────────────────────────────────
 
 async function logActivity(action, details) {
   try {
@@ -207,16 +125,6 @@ async function logActivity(action, details) {
   }
 }
 
-async function getRecentActivities(limit = 20) {
-  const { data, error } = await supabase
-    .from('activity_log')
-    .select('*')
-    .order('created_at', { ascending: false })
-    .limit(limit);
-  if (error) throw error;
-  return data;
-}
-
 module.exports = {
   supabase,
   getAllStudents,
@@ -224,11 +132,7 @@ module.exports = {
   createStudent,
   updateStudent,
   deleteStudent,
-  getFeeRecordsByMonth,
-  generateFeeRecords,
-  updateFeeStatus,
-  getUnpaidStudents,
-  getFeeSummary,
-  logActivity,
-  getRecentActivities
+  getLastReminderRun,
+  logReminderRun,
+  logActivity
 };

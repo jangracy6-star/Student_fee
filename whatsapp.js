@@ -5,16 +5,29 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const QRCode = require('qrcode');
 
+const RECONNECT_DELAY_MS = 10000;
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'];
+
 let client = null;
 let qrCodeDataUrl = null;
 let connectionStatus = 'disconnected'; // 'disconnected' | 'qr_ready' | 'connecting' | 'connected'
 let statusMessage = 'WhatsApp not initialized';
+let reconnectTimer = null;
+let onReadyCallback = null;
 
-function initWhatsApp() {
+/** @param {Function} [onReady] - called every time WhatsApp becomes connected */
+function initWhatsApp(onReady) {
+  if (onReady) onReadyCallback = onReady;
+  clearTimeout(reconnectTimer);
+  connectionStatus = 'connecting';
+  statusMessage = 'Starting WhatsApp...';
+
   client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
       headless: true,
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -42,6 +55,7 @@ function initWhatsApp() {
     connectionStatus = 'connected';
     statusMessage = 'WhatsApp connected successfully';
     qrCodeDataUrl = null;
+    onReadyCallback?.();
   });
 
   client.on('authenticated', () => {
@@ -53,14 +67,16 @@ function initWhatsApp() {
   client.on('auth_failure', (msg) => {
     console.error('❌ WhatsApp authentication failed:', msg);
     connectionStatus = 'disconnected';
-    statusMessage = 'Authentication failed. Please restart.';
+    statusMessage = 'Authentication failed. Retrying...';
+    scheduleReconnect();
   });
 
   client.on('disconnected', (reason) => {
     console.log('📴 WhatsApp disconnected:', reason);
     connectionStatus = 'disconnected';
-    statusMessage = `Disconnected: ${reason}`;
+    statusMessage = `Disconnected: ${reason}. Reconnecting...`;
     qrCodeDataUrl = null;
+    scheduleReconnect();
   });
 
   client.initialize().catch(err => {
@@ -70,6 +86,32 @@ function initWhatsApp() {
   });
 
   return client;
+}
+
+// A disconnected whatsapp-web.js client cannot be reused — tear it down and start fresh
+function scheduleReconnect() {
+  clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(async () => {
+    try {
+      if (client) await client.destroy();
+    } catch (err) {
+      // Browser may already be gone
+    }
+    console.log('🔄 Re-initializing WhatsApp...');
+    initWhatsApp();
+  }, RECONNECT_DELAY_MS);
+}
+
+/** Unlink this device from WhatsApp; a fresh QR code will be generated */
+async function logout() {
+  if (!client) throw new Error('WhatsApp is not initialized');
+  if (connectionStatus === 'connected') {
+    await client.logout();
+  }
+  qrCodeDataUrl = null;
+  connectionStatus = 'disconnected';
+  statusMessage = 'Logged out. Generating new QR code...';
+  scheduleReconnect();
 }
 
 function getStatus() {
@@ -85,6 +127,31 @@ function getQRCode() {
 }
 
 /**
+ * Normalize a phone number to digits with country code (e.g., "919876543210").
+ * 10-digit numbers are assumed to be Indian and get the '91' prefix.
+ */
+function normalizePhone(phone) {
+  let clean = String(phone || '').replace(/\D/g, '');
+  if (clean.length === 11 && clean.startsWith('0')) clean = clean.slice(1);
+  if (clean.length === 10) clean = '91' + clean;
+  return clean;
+}
+
+function formatMonth(month) {
+  const [year, monthNum] = String(month).split('-');
+  return `${MONTH_NAMES[parseInt(monthNum) - 1] || monthNum} ${year}`;
+}
+
+function buildReminderMessage(student, month, institutionName) {
+  return `🎓 *Fee Reminder — ${institutionName}*\n\n` +
+    `Dear *${student.name}*,\n\n` +
+    `This is a gentle reminder that your fee of *₹${Number(student.fee_amount).toLocaleString('en-IN')}* ` +
+    `for the month of *${formatMonth(month)}* is due.\n\n` +
+    `Please make the payment at your earliest convenience.\n\n` +
+    `Thank you!\n— ${institutionName}`;
+}
+
+/**
  * Send a WhatsApp message to a phone number
  * @param {string} phone - Phone number with country code (e.g., "919876543210")
  * @param {string} message - Message text
@@ -95,15 +162,7 @@ async function sendMessage(phone, message) {
     throw new Error('WhatsApp is not connected');
   }
 
-  // Format phone number — remove + and spaces, ensure it ends with @c.us
-  let cleanPhone = phone.replace(/[\s\-\+\(\)]/g, '');
-  
-  // If the number is exactly 10 digits (common in India), prepend the country code '91'
-  if (cleanPhone.length === 10) {
-    cleanPhone = '91' + cleanPhone;
-  }
-
-  let chatId = `${cleanPhone}@c.us`;
+  const cleanPhone = normalizePhone(phone);
 
   try {
     // Verify if the number is registered on WhatsApp
@@ -111,9 +170,8 @@ async function sendMessage(phone, message) {
     if (!numberId) {
       throw new Error(`Number ${cleanPhone} is not registered on WhatsApp`);
     }
-    chatId = numberId._serialized;
 
-    await client.sendMessage(chatId, message);
+    await client.sendMessage(numberId._serialized, message);
     return { success: true, phone: cleanPhone };
   } catch (err) {
     console.error(`Failed to send message to ${cleanPhone}:`, err.message);
@@ -122,34 +180,23 @@ async function sendMessage(phone, message) {
 }
 
 /**
- * Send fee reminders to a list of unpaid students
- * @param {Array} unpaidRecords - Array of fee records with student details
+ * Send the monthly fee reminder to every student
+ * @param {Array} students - Student rows (name, phone, fee_amount)
+ * @param {string} month - 'YYYY-MM'
  * @param {string} institutionName - Name of the institution
  * @returns {object} - Summary of sent/failed
  */
-async function sendFeeReminders(unpaidRecords, institutionName) {
+async function sendFeeReminders(students, month, institutionName) {
   const results = { sent: 0, failed: 0, errors: [] };
 
-  for (const record of unpaidRecords) {
-    const student = record.students;
-    if (!student || !student.phone) {
+  for (const [i, student] of students.entries()) {
+    if (!student.phone) {
       results.failed++;
-      results.errors.push({ name: 'Unknown', error: 'No phone number' });
+      results.errors.push({ name: student.name, error: 'No phone number' });
       continue;
     }
 
-    // Format month for display
-    const [year, monthNum] = record.month.split('-');
-    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
-      'July', 'August', 'September', 'October', 'November', 'December'];
-    const monthName = monthNames[parseInt(monthNum) - 1] || monthNum;
-
-    const message = `🎓 *Fee Reminder — ${institutionName}*\n\n` +
-      `Dear *${student.name}*,\n\n` +
-      `This is a gentle reminder that your fee of *₹${Number(student.fee_amount).toLocaleString('en-IN')}* ` +
-      `for the month of *${monthName} ${year}* is pending.\n\n` +
-      `Please make the payment at your earliest convenience.\n\n` +
-      `Thank you!\n— ${institutionName}`;
+    const message = buildReminderMessage(student, month, institutionName);
 
     try {
       const result = await sendMessage(student.phone, message);
@@ -159,12 +206,14 @@ async function sendFeeReminders(unpaidRecords, institutionName) {
         results.failed++;
         results.errors.push({ name: student.name, error: result.error });
       }
-
-      // Small delay between messages to avoid rate limiting
-      await new Promise(resolve => setTimeout(resolve, 2000));
     } catch (err) {
       results.failed++;
       results.errors.push({ name: student.name, error: err.message });
+    }
+
+    // Small delay between messages to avoid rate limiting
+    if (i < students.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
   }
 
@@ -173,8 +222,11 @@ async function sendFeeReminders(unpaidRecords, institutionName) {
 
 module.exports = {
   initWhatsApp,
+  logout,
   getStatus,
   getQRCode,
+  normalizePhone,
+  buildReminderMessage,
   sendMessage,
   sendFeeReminders
 };

@@ -1,6 +1,6 @@
 /**
  * Student Fee Management System — Express Server
- * Main entry point with API routes, WhatsApp, and cron job
+ * Students API, WhatsApp connection, and the automatic monthly reminder
  */
 require('dotenv').config();
 const express = require('express');
@@ -10,74 +10,74 @@ const path = require('path');
 
 const db = require('./database');
 const whatsapp = require('./whatsapp');
+const auth = require('./auth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const INSTITUTION_NAME = process.env.INSTITUTION_NAME || 'Student Academy';
+const TIMEZONE = process.env.TIMEZONE || 'Asia/Kolkata';
+
+// If the server was asleep or WhatsApp was offline on the 1st,
+// reminders still go out as soon as possible during the first few days.
+const CATCH_UP_DAYS = 3;
 
 // ─── Middleware ─────────────────────────────────────────
+app.set('trust proxy', 1);
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ─── Health Check ──────────────────────────────────────
+// ─── Health Check & Session ────────────────────────────
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', institution: INSTITUTION_NAME, timestamp: new Date().toISOString() });
+});
+
+app.get('/api/session', auth.session);
+app.post('/api/login', auth.login);
+app.post('/api/logout', auth.logout);
+
+// Everything below requires login (when ADMIN_PASSWORD is set)
+app.use('/api', auth.requireAuth);
+
+app.get('/api/config', (req, res) => {
+  res.json({ institution: INSTITUTION_NAME, authEnabled: auth.enabled });
 });
 
 // ═══════════════════════════════════════════════════════
 //  STUDENT ROUTES
 // ═══════════════════════════════════════════════════════
 
-// GET all students
 app.get('/api/students', async (req, res) => {
   try {
-    const students = await db.getAllStudents();
-    res.json(students);
+    res.json(await db.getAllStudents());
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// GET single student
-app.get('/api/students/:id', async (req, res) => {
-  try {
-    const student = await db.getStudentById(parseInt(req.params.id));
-    res.json(student);
-  } catch (err) {
-    res.status(404).json({ error: 'Student not found' });
-  }
-});
-
-// POST create student
 app.post('/api/students', async (req, res) => {
   try {
-    const { name, phone, class_name, fee_amount } = req.body;
-    if (!name || !phone || !class_name || fee_amount == null) {
-      return res.status(400).json({ error: 'All fields are required: name, phone, class_name, fee_amount' });
-    }
-    const student = await db.createStudent({ name, phone, class_name, fee_amount });
-    res.status(201).json(student);
+    const { student, error } = validateStudent(req.body);
+    if (error) return res.status(400).json({ error });
+    res.status(201).json(await db.createStudent(student));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// PUT update student
 app.put('/api/students/:id', async (req, res) => {
   try {
-    const { name, phone, class_name, fee_amount } = req.body;
-    const student = await db.updateStudent(parseInt(req.params.id), { name, phone, class_name, fee_amount });
-    res.json(student);
+    const { student, error } = validateStudent(req.body);
+    if (error) return res.status(400).json({ error });
+    res.json(await db.updateStudent(parseId(req.params.id), student));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// DELETE student
 app.delete('/api/students/:id', async (req, res) => {
   try {
-    await db.deleteStudent(parseInt(req.params.id));
+    await db.deleteStudent(parseId(req.params.id));
     res.json({ message: 'Student deleted successfully' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -85,155 +85,133 @@ app.delete('/api/students/:id', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════
-//  FEE MANAGEMENT ROUTES
+//  WHATSAPP & REMINDER ROUTES
 // ═══════════════════════════════════════════════════════
 
-// GET fee records for a month
-app.get('/api/fees', async (req, res) => {
-  try {
-    const month = req.query.month || getCurrentMonth();
-    const records = await db.getFeeRecordsByMonth(month);
-    const summary = await db.getFeeSummary(month);
-    res.json({ month, records, summary });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// POST generate fee records for a month
-app.post('/api/fees/generate', async (req, res) => {
-  try {
-    const month = req.body.month || getCurrentMonth();
-    const result = await db.generateFeeRecords(month);
-    res.json({ message: `Fee records generated for ${month}`, ...result });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// PUT update fee status
-app.put('/api/fees/:id/status', async (req, res) => {
-  try {
-    const { status } = req.body;
-    if (!['paid', 'unpaid'].includes(status)) {
-      return res.status(400).json({ error: 'Status must be "paid" or "unpaid"' });
-    }
-    const record = await db.updateFeeStatus(parseInt(req.params.id), status);
-    res.json(record);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// GET fee summary for a month
-app.get('/api/fees/summary', async (req, res) => {
-  try {
-    const month = req.query.month || getCurrentMonth();
-    const summary = await db.getFeeSummary(month);
-    res.json({ month, ...summary });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ═══════════════════════════════════════════════════════
-//  WHATSAPP ROUTES
-// ═══════════════════════════════════════════════════════
-
-// GET WhatsApp connection status
 app.get('/api/whatsapp/status', (req, res) => {
   res.json(whatsapp.getStatus());
 });
 
-// GET WhatsApp QR code
 app.get('/api/whatsapp/qr', (req, res) => {
   const qr = whatsapp.getQRCode();
+  const status = whatsapp.getStatus();
   if (qr) {
-    res.json({ qr });
+    res.json({ qr, status: status.status });
+  } else if (status.status === 'connected') {
+    res.json({ status: status.status, message: 'Already connected — no QR needed' });
   } else {
-    const status = whatsapp.getStatus();
-    if (status.status === 'connected') {
-      res.json({ message: 'Already connected — no QR needed' });
-    } else {
-      res.json({ message: 'QR code not available yet. Please wait...' });
-    }
+    res.json({ status: status.status, message: status.message || 'QR code not available yet. Please wait...' });
   }
 });
 
-// POST send reminders to all unpaid students
-app.post('/api/whatsapp/send-reminders', async (req, res) => {
+app.post('/api/whatsapp/logout', async (req, res) => {
   try {
-    const month = req.body.month || getCurrentMonth();
-    const unpaid = await db.getUnpaidStudents(month);
-
-    if (unpaid.length === 0) {
-      return res.json({ message: 'No unpaid students found for this month', sent: 0, failed: 0 });
-    }
-
-    const waStatus = whatsapp.getStatus();
-    if (waStatus.status !== 'connected') {
-      return res.status(400).json({ error: 'WhatsApp is not connected. Please scan the QR code first.' });
-    }
-
-    const results = await whatsapp.sendFeeReminders(unpaid, INSTITUTION_NAME);
-    await db.logActivity('Reminders Sent', `Month: ${month} | Sent: ${results.sent}, Failed: ${results.failed}`);
-    res.json({ message: 'Reminders sent', ...results });
+    await whatsapp.logout();
+    await db.logActivity('WhatsApp Logged Out', 'Device unlinked from the dashboard');
+    res.json({ message: 'WhatsApp logged out' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ═══════════════════════════════════════════════════════
-//  ACTIVITY LOG ROUTE
-// ═══════════════════════════════════════════════════════
-
-app.get('/api/activities', async (req, res) => {
+// When the last monthly reminder went out and when the next one will
+app.get('/api/reminders', async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 20;
-    const activities = await db.getRecentActivities(limit);
-    res.json(activities);
+    const { month, day } = nowInTimezone();
+    const last = await db.getLastReminderRun();
+    const sentThisMonth = last?.month === month || lastSentMonth === month;
+    const nextMonth = (sentThisMonth || day > CATCH_UP_DAYS) ? shiftMonth(month, 1) : month;
+    res.json({
+      lastRun: last,
+      nextDate: `${nextMonth}-01`,
+      running: reminderRunning
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ═══════════════════════════════════════════════════════
-//  CRON JOB — 1st of Every Month at 00:01 AM
-// ═══════════════════════════════════════════════════════
-
-cron.schedule('1 0 1 * *', async () => {
-  console.log('\n🗓️  Monthly cron job triggered!');
-  const month = getCurrentMonth();
-
-  try {
-    // 1. Generate fee records
-    const result = await db.generateFeeRecords(month);
-    console.log(`   📋 Fee records created: ${result.created}, skipped: ${result.skipped}`);
-
-    // 2. Send WhatsApp reminders (if connected)
-    const waStatus = whatsapp.getStatus();
-    if (waStatus.status === 'connected') {
-      const unpaid = await db.getUnpaidStudents(month);
-      if (unpaid.length > 0) {
-        const sendResult = await whatsapp.sendFeeReminders(unpaid, INSTITUTION_NAME);
-        console.log(`   📱 Reminders sent: ${sendResult.sent}, failed: ${sendResult.failed}`);
-        await db.logActivity('Auto Reminders (Cron)', `Month: ${month} | Sent: ${sendResult.sent}, Failed: ${sendResult.failed}`);
-      }
-    } else {
-      console.log('   ⚠️  WhatsApp not connected — skipping auto reminders');
-      await db.logActivity('Cron Job', `Fee records generated for ${month}. WhatsApp not connected — reminders skipped.`);
-    }
-  } catch (err) {
-    console.error('   ❌ Cron job error:', err.message);
-  }
+app.use('/api', (req, res) => {
+  res.status(404).json({ error: 'Not found' });
 });
 
-// ─── Helper ────────────────────────────────────────────
-function getCurrentMonth() {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  return `${year}-${month}`;
+// ═══════════════════════════════════════════════════════
+//  MONTHLY REMINDERS
+// ═══════════════════════════════════════════════════════
+
+let reminderRunning = false;
+let lastSentMonth = null; // in-memory guard so a failed log write can never cause a resend
+
+async function runMonthlyReminders(trigger) {
+  if (reminderRunning) return;
+  const { month, day } = nowInTimezone();
+  if (day > CATCH_UP_DAYS || lastSentMonth === month) return;
+  if (whatsapp.getStatus().status !== 'connected') {
+    console.log(`⏳ Reminders for ${month} waiting for WhatsApp to connect (${trigger})`);
+    return;
+  }
+
+  reminderRunning = true;
+  try {
+    const last = await db.getLastReminderRun();
+    if (last?.month === month) {
+      lastSentMonth = month;
+      return;
+    }
+
+    const students = await db.getAllStudents();
+    if (students.length === 0) return;
+
+    console.log(`\n🗓️  Sending ${month} reminders to ${students.length} students (${trigger})`);
+    const results = await whatsapp.sendFeeReminders(students, month, INSTITUTION_NAME);
+    lastSentMonth = month;
+    await db.logReminderRun(month, results.sent, results.failed);
+    console.log(`   📱 Sent: ${results.sent}, failed: ${results.failed}`);
+  } catch (err) {
+    console.error('   ❌ Monthly reminder error:', err.message);
+  } finally {
+    reminderRunning = false;
+  }
+}
+
+// Every hour on days 1–3 of the month; runMonthlyReminders makes sure it only sends once
+cron.schedule(`1 * 1-${CATCH_UP_DAYS} * *`, () => runMonthlyReminders('schedule'), { timezone: TIMEZONE });
+
+// ─── Helpers ───────────────────────────────────────────
+function nowInTimezone() {
+  // 'en-CA' formats as YYYY-MM-DD
+  const date = new Intl.DateTimeFormat('en-CA', { timeZone: TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit' })
+    .format(new Date());
+  return { month: date.slice(0, 7), day: Number(date.slice(8, 10)) };
+}
+
+function shiftMonth(month, delta) {
+  const [year, mon] = month.split('-').map(Number);
+  const d = new Date(Date.UTC(year, mon - 1 + delta, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+function parseId(value) {
+  const id = parseInt(value, 10);
+  if (!Number.isInteger(id) || id <= 0) throw new Error('Invalid id');
+  return id;
+}
+
+function validateStudent(body = {}) {
+  const name = String(body.name || '').trim();
+  const phone = String(body.phone || '').replace(/[^\d+]/g, '');
+  const class_name = String(body.class_name || '').trim();
+  const fee_amount = Number(body.fee_amount);
+  const digits = phone.replace(/\D/g, '');
+
+  if (!name || !phone || !class_name || body.fee_amount == null || body.fee_amount === '') {
+    return { error: 'All fields are required: name, phone, class_name, fee_amount' };
+  }
+  if (name.length > 100) return { error: 'Name is too long' };
+  if (digits.length < 10 || digits.length > 15) return { error: 'Enter a valid phone number (10–15 digits)' };
+  if (!Number.isFinite(fee_amount) || fee_amount < 0) return { error: 'Fee must be a positive number' };
+
+  return { student: { name, phone, class_name, fee_amount } };
 }
 
 // ─── Catch-all: Serve frontend ─────────────────────────
@@ -245,9 +223,14 @@ app.get('*', (req, res) => {
 app.listen(PORT, () => {
   console.log(`\n🚀 Student Fee Management System`);
   console.log(`   Server running at: http://localhost:${PORT}`);
-  console.log(`   Institution: ${INSTITUTION_NAME}\n`);
+  console.log(`   Institution: ${INSTITUTION_NAME}`);
+  console.log(`   Timezone: ${TIMEZONE}`);
+  if (!auth.enabled) {
+    console.log('   ⚠️  ADMIN_PASSWORD is not set — the dashboard is open to anyone with the URL');
+  }
+  console.log('');
 
-  // Initialize WhatsApp
+  // Initialize WhatsApp; whenever it connects, send this month's reminders if they're still due
   console.log('📱 Initializing WhatsApp...');
-  whatsapp.initWhatsApp();
+  whatsapp.initWhatsApp(() => runMonthlyReminders('whatsapp connected'));
 });

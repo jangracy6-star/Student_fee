@@ -1,227 +1,272 @@
 /**
  * FeeFlow — Frontend Application Logic
- * Handles API calls, DOM updates, and user interactions
+ * Add students; WhatsApp sends each of them a fee reminder on the 1st of every month.
  */
 
-const API_BASE = '';  // Same origin
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'];
 
 // ─── State ─────────────────────────────────────────────
-let studentsData = [];
-let feeRecords = [];
-let deleteTargetId = null;
-let waStatusInterval = null;
+const state = {
+  config: { institution: 'Student Fee Reminders', authEnabled: false },
+  students: [],
+  studentsLoaded: false,
+  wa: { status: null },
+  reminders: null
+};
+
+let waPollTimer = null;
+let qrPollTimer = null;
+let reminderPollTimer = null;
+
+const $ = (id) => document.getElementById(id);
 
 // ─── Initialize ────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  initMonthPicker();
+document.addEventListener('DOMContentLoaded', boot);
+
+async function boot() {
+  bindEvents();
+  try {
+    const session = await fetch('/api/session').then(r => r.json());
+    if (session.authEnabled && !session.authenticated) return showLogin();
+  } catch (err) {
+    // Server unreachable — still render the shell; API calls will show errors
+  }
+  startApp();
+}
+
+async function startApp() {
+  $('login-screen').hidden = true;
+  try {
+    state.config = await api('/api/config');
+  } catch (err) {
+    // keep defaults
+  }
+  $('institution-name').textContent = state.config.institution;
+  $('btn-logout').hidden = !state.config.authEnabled;
+  document.title = `FeeFlow — ${state.config.institution}`;
+
   loadStudents();
-  loadFeeRecords();
-  loadActivities();
   startWhatsAppPolling();
-});
-
-// ═══════════════════════════════════════════════════════
-//  TAB NAVIGATION
-// ═══════════════════════════════════════════════════════
-
-function switchTab(tabName) {
-  // Update tab buttons
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
-
-  // Update content sections
-  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-  document.getElementById(`content-${tabName}`).classList.add('active');
-
-  // Reload data for the activated tab
-  if (tabName === 'students') loadStudents();
-  if (tabName === 'fees') loadFeeRecords();
-  if (tabName === 'activity') loadActivities();
+  registerServiceWorker();
 }
 
 // ═══════════════════════════════════════════════════════
-//  MONTH PICKER
+//  API
 // ═══════════════════════════════════════════════════════
 
-function initMonthPicker() {
-  const picker = document.getElementById('month-picker');
-  const now = new Date();
-  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  picker.value = currentMonth;
-}
+async function api(path, { method = 'GET', body } = {}) {
+  const res = await fetch(path, {
+    method,
+    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined
+  });
+  let data = null;
+  try { data = await res.json(); } catch (err) { /* empty body */ }
 
-function getSelectedMonth() {
-  return document.getElementById('month-picker').value;
+  if (res.status === 401 && path !== '/api/login') {
+    showLogin();
+    throw new Error('Please log in');
+  }
+  if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
+  return data;
 }
 
 // ═══════════════════════════════════════════════════════
-//  STUDENT MANAGEMENT
+//  LOGIN
+// ═══════════════════════════════════════════════════════
+
+function showLogin() {
+  clearInterval(waPollTimer);
+  clearInterval(qrPollTimer);
+  clearTimeout(reminderPollTimer);
+  $('login-screen').hidden = false;
+  setTimeout(() => $('login-password').focus(), 50);
+}
+
+async function handleLogin(event) {
+  event.preventDefault();
+  const btn = $('btn-login');
+  const errorEl = $('login-error');
+  errorEl.hidden = true;
+  setLoading(btn, true);
+  try {
+    await api('/api/login', { method: 'POST', body: { password: $('login-password').value } });
+    $('login-password').value = '';
+    startApp();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.hidden = false;
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+async function logout() {
+  if (!await confirmDialog({ title: 'Log out?', message: 'You will need the admin password to log back in.', confirmLabel: 'Log out' })) return;
+  await api('/api/logout', { method: 'POST' }).catch(() => {});
+  showLogin();
+}
+
+// ═══════════════════════════════════════════════════════
+//  STUDENTS
 // ═══════════════════════════════════════════════════════
 
 async function loadStudents() {
+  if (!state.studentsLoaded) $('students-list').innerHTML = skeletons(4);
   try {
-    const res = await fetch(`${API_BASE}/api/students`);
-    if (!res.ok) throw new Error('Failed to load students');
-    studentsData = await res.json();
-    renderStudents(studentsData);
-    document.getElementById('total-students-count').textContent = studentsData.length;
+    state.students = await api('/api/students');
+    state.studentsLoaded = true;
+    $('class-options').innerHTML = [...new Set(state.students.map(s => s.class_name))]
+      .map(c => `<option value="${escapeHtml(c)}"></option>`).join('');
+    renderStudents();
+    renderReminderCard();
   } catch (err) {
-    console.error('Error loading students:', err);
-    showToast('Failed to load students', 'error');
+    showToast(err.message || 'Failed to load students', 'error');
+    if (!state.studentsLoaded) {
+      $('students-list').innerHTML = `
+        <div class="empty-state">
+          <svg class="i"><use href="#i-x"/></svg>
+          <p>Could not load students</p>
+          <button class="btn btn-secondary" data-action="reload">Try again</button>
+        </div>`;
+    }
   }
 }
 
-function renderStudents(students) {
-  const tbody = document.getElementById('students-tbody');
+function renderStudents() {
+  const list = $('students-list');
+  const total = state.students.length;
+  const query = $('student-search').value.trim().toLowerCase();
 
-  if (students.length === 0) {
-    tbody.innerHTML = `
-      <tr class="empty-row">
-        <td colspan="6">
-          <div class="empty-state">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3">
-              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
-            </svg>
-            <p>No students found</p>
-            <small>Click "Add Student" to get started</small>
-          </div>
-        </td>
-      </tr>`;
+  $('students-count').textContent = `${total} student${total === 1 ? '' : 's'}`;
+  $('search-bar').hidden = total < 6;
+
+  const students = state.students.filter(s => !query ||
+    s.name.toLowerCase().includes(query) || s.phone.includes(query) || s.class_name.toLowerCase().includes(query));
+
+  if (total === 0) {
+    list.innerHTML = `
+      <div class="empty-state">
+        <svg class="i"><use href="#i-users"/></svg>
+        <p>No students yet</p>
+        <small>Add a student and they'll get a WhatsApp fee reminder on the 1st of every month</small>
+        <button class="btn btn-primary" data-action="add-student"><svg class="i"><use href="#i-plus"/></svg> Add Student</button>
+      </div>`;
     return;
   }
 
-  tbody.innerHTML = students.map((s, i) => `
-    <tr>
-      <td data-label="#">${i + 1}</td>
-      <td data-label="Name"><span class="student-name">${escapeHtml(s.name)}</span></td>
-      <td data-label="Phone"><span class="student-phone">${escapeHtml(s.phone)}</span></td>
-      <td data-label="Class">${escapeHtml(s.class_name)}</td>
-      <td data-label="Monthly Fee"><span class="fee-amount">₹${Number(s.fee_amount).toLocaleString('en-IN')}</span></td>
-      <td data-label="Actions">
-        <div class="action-group">
-          <button class="btn btn-sm btn-icon btn-edit" onclick="editStudent(${s.id})" title="Edit">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-          </button>
-          <button class="btn btn-sm btn-icon btn-delete" onclick="promptDelete(${s.id}, '${escapeHtml(s.name)}')" title="Delete">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-          </button>
-        </div>
-      </td>
-    </tr>
-  `).join('');
-}
-
-function filterStudents() {
-  const query = document.getElementById('student-search').value.toLowerCase();
-  const filtered = studentsData.filter(s =>
-    s.name.toLowerCase().includes(query) ||
-    s.phone.includes(query) ||
-    s.class_name.toLowerCase().includes(query)
-  );
-  renderStudents(filtered);
-}
-
-// ─── Student Modal ─────────────────────────────────────
-
-function openStudentModal(student = null) {
-  const modal = document.getElementById('student-modal');
-  const title = document.getElementById('student-modal-title');
-  const form = document.getElementById('student-form');
-
-  form.reset();
-  document.getElementById('student-edit-id').value = '';
-
-  if (student) {
-    title.textContent = 'Edit Student';
-    document.getElementById('student-edit-id').value = student.id;
-    document.getElementById('input-name').value = student.name;
-    document.getElementById('input-phone').value = student.phone;
-    document.getElementById('input-class').value = student.class_name;
-    document.getElementById('input-fee').value = student.fee_amount;
-  } else {
-    title.textContent = 'Add New Student';
+  if (students.length === 0) {
+    list.innerHTML = `<div class="empty-state"><svg class="i"><use href="#i-search"/></svg><p>No matches</p></div>`;
+    return;
   }
 
-  modal.classList.add('show');
-  setTimeout(() => document.getElementById('input-name').focus(), 100);
+  list.innerHTML = students.map(s => `
+    <button class="item-card" data-action="edit-student" data-id="${s.id}">
+      ${avatar(s.name)}
+      <span class="item-main">
+        <span class="item-title">${escapeHtml(s.name)}</span>
+        <span class="item-meta">${escapeHtml(s.class_name)} · ${escapeHtml(formatPhone(s.phone))}</span>
+      </span>
+      <span class="item-side">
+        <span class="amount">${formatMoney(s.fee_amount)}</span>
+        <span class="item-sub">per month</span>
+      </span>
+    </button>`).join('');
 }
 
-function closeStudentModal() {
-  document.getElementById('student-modal').classList.remove('show');
-}
+function openStudentForm(student = null) {
+  const form = $('student-form');
+  form.reset();
+  form.querySelectorAll('.invalid').forEach(el => el.classList.remove('invalid'));
+  $('student-form-error').hidden = true;
+  $('student-edit-id').value = student ? student.id : '';
+  $('student-sheet-title').textContent = student ? 'Edit Student' : 'Add Student';
+  $('btn-delete-student').hidden = !student;
+  $('btn-cancel-student').hidden = !!student;
 
-async function editStudent(id) {
-  const student = studentsData.find(s => s.id === id);
-  if (student) openStudentModal(student);
+  if (student) {
+    $('input-name').value = student.name;
+    $('input-phone').value = student.phone;
+    $('input-class').value = student.class_name;
+    $('input-fee').value = student.fee_amount;
+  }
+
+  openSheet('student-sheet');
+  // Only autofocus with a real keyboard — avoids the on-screen keyboard jumping up on phones
+  if (matchMedia('(hover: hover)').matches) setTimeout(() => $('input-name').focus(), 150);
 }
 
 async function saveStudent(event) {
   event.preventDefault();
 
-  const editId = document.getElementById('student-edit-id').value;
+  const editId = $('student-edit-id').value;
+  const fields = {
+    name: $('input-name'),
+    phone: $('input-phone'),
+    class_name: $('input-class'),
+    fee_amount: $('input-fee')
+  };
   const payload = {
-    name: document.getElementById('input-name').value.trim(),
-    phone: document.getElementById('input-phone').value.trim(),
-    class_name: document.getElementById('input-class').value.trim(),
-    fee_amount: parseFloat(document.getElementById('input-fee').value)
+    name: fields.name.value.trim(),
+    phone: fields.phone.value.trim(),
+    class_name: fields.class_name.value.trim(),
+    fee_amount: fields.fee_amount.value === '' ? null : Number(fields.fee_amount.value)
   };
 
-  if (!payload.name || !payload.phone || !payload.class_name || isNaN(payload.fee_amount)) {
-    showToast('Please fill all fields correctly', 'warning');
+  const problems = [];
+  Object.values(fields).forEach(f => f.classList.remove('invalid'));
+  if (!payload.name) problems.push(['name', 'Enter the student\'s name']);
+  const digits = payload.phone.replace(/\D/g, '');
+  if (digits.length < 10 || digits.length > 15) problems.push(['phone', 'Enter a valid WhatsApp number (10–15 digits)']);
+  if (!payload.class_name) problems.push(['class_name', 'Enter a class or course']);
+  if (payload.fee_amount == null || !Number.isFinite(payload.fee_amount) || payload.fee_amount < 0) problems.push(['fee_amount', 'Enter the monthly fee']);
+
+  const errorEl = $('student-form-error');
+  if (problems.length) {
+    problems.forEach(([key]) => fields[key].classList.add('invalid'));
+    errorEl.textContent = problems[0][1];
+    errorEl.hidden = false;
+    fields[problems[0][0]].focus();
     return;
   }
+  errorEl.hidden = true;
 
+  const btn = $('btn-save-student');
+  setLoading(btn, true);
   try {
-    let res;
     if (editId) {
-      res = await fetch(`${API_BASE}/api/students/${editId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+      await api(`/api/students/${editId}`, { method: 'PUT', body: payload });
     } else {
-      res = await fetch(`${API_BASE}/api/students`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+      await api('/api/students', { method: 'POST', body: payload });
     }
-
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.error || 'Failed to save');
-    }
-
-    closeStudentModal();
-    showToast(editId ? `${payload.name} updated successfully` : `${payload.name} added successfully`, 'success');
+    await closeSheet();
+    showToast(editId ? `${payload.name} updated` : `${payload.name} added`, 'success');
     loadStudents();
   } catch (err) {
-    showToast(err.message, 'error');
+    errorEl.textContent = err.message;
+    errorEl.hidden = false;
+  } finally {
+    setLoading(btn, false);
   }
 }
 
-// ─── Delete Student ────────────────────────────────────
-
-function promptDelete(id, name) {
-  deleteTargetId = id;
-  document.getElementById('confirm-text').textContent = `Are you sure you want to delete "${name}"? This will also remove all their fee records.`;
-  document.getElementById('confirm-modal').classList.add('show');
-}
-
-function closeConfirmModal() {
-  document.getElementById('confirm-modal').classList.remove('show');
-  deleteTargetId = null;
-}
-
-async function confirmDelete() {
-  if (!deleteTargetId) return;
+async function deleteStudent() {
+  const id = Number($('student-edit-id').value);
+  const student = state.students.find(s => s.id === id);
+  if (!student) return;
+  const ok = await confirmDialog({
+    title: 'Delete student?',
+    message: `"${student.name}" will be removed and won't get any more reminders.`,
+    confirmLabel: 'Delete',
+    danger: true
+  });
+  if (!ok) return;
 
   try {
-    const res = await fetch(`${API_BASE}/api/students/${deleteTargetId}`, { method: 'DELETE' });
-    if (!res.ok) throw new Error('Failed to delete');
-
-    closeConfirmModal();
-    showToast('Student deleted successfully', 'success');
+    await api(`/api/students/${id}`, { method: 'DELETE' });
+    await closeSheet();
+    showToast(`${student.name} deleted`, 'success');
     loadStudents();
   } catch (err) {
     showToast(err.message, 'error');
@@ -229,307 +274,307 @@ async function confirmDelete() {
 }
 
 // ═══════════════════════════════════════════════════════
-//  FEE MANAGEMENT
-// ═══════════════════════════════════════════════════════
-
-async function loadFeeRecords() {
-  const month = getSelectedMonth();
-  if (!month) return;
-
-  try {
-    const res = await fetch(`${API_BASE}/api/fees?month=${month}`);
-    if (!res.ok) throw new Error('Failed to load fee records');
-
-    const data = await res.json();
-    feeRecords = data.records;
-    renderFeeRecords(feeRecords);
-    updateFeeSummary(data.summary);
-  } catch (err) {
-    console.error('Error loading fees:', err);
-    showToast('Failed to load fee records', 'error');
-  }
-}
-
-function renderFeeRecords(records) {
-  const tbody = document.getElementById('fees-tbody');
-
-  if (records.length === 0) {
-    tbody.innerHTML = `
-      <tr class="empty-row">
-        <td colspan="8">
-          <div class="empty-state">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3">
-              <rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/>
-            </svg>
-            <p>No fee records for this month</p>
-            <small>Click "Generate Records" to create entries for all students</small>
-          </div>
-        </td>
-      </tr>`;
-    return;
-  }
-
-  tbody.innerHTML = records.map((r, i) => {
-    const student = r.students || {};
-    const isPaid = r.status === 'paid';
-    const paidDate = r.paid_date ? new Date(r.paid_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
-    const newStatus = isPaid ? 'unpaid' : 'paid';
-    const toggleClass = isPaid ? 'mark-unpaid' : 'mark-paid';
-    const toggleLabel = isPaid ? 'Mark Unpaid' : 'Mark Paid';
-
-    return `
-      <tr>
-        <td data-label="#">${i + 1}</td>
-        <td data-label="Student Name"><span class="student-name">${escapeHtml(student.name || 'N/A')}</span></td>
-        <td data-label="Phone"><span class="student-phone">${escapeHtml(student.phone || 'N/A')}</span></td>
-        <td data-label="Class">${escapeHtml(student.class_name || 'N/A')}</td>
-        <td data-label="Fee Amount"><span class="fee-amount">₹${Number(student.fee_amount || 0).toLocaleString('en-IN')}</span></td>
-        <td data-label="Status">
-          <span class="status-badge ${isPaid ? 'paid' : 'unpaid'}">
-            ${isPaid ? '✅' : '❌'} ${r.status.charAt(0).toUpperCase() + r.status.slice(1)}
-          </span>
-        </td>
-        <td data-label="Paid Date">${paidDate}</td>
-        <td data-label="Action">
-          <button class="btn btn-sm btn-toggle ${toggleClass}" onclick="toggleFeeStatus(${r.id}, '${newStatus}')">
-            ${toggleLabel}
-          </button>
-        </td>
-      </tr>`;
-  }).join('');
-}
-
-function updateFeeSummary(summary) {
-  document.getElementById('fee-total').textContent = summary.total;
-  document.getElementById('fee-paid').textContent = summary.paid;
-  document.getElementById('fee-unpaid').textContent = summary.unpaid;
-  document.getElementById('fee-collected').textContent = `₹${Number(summary.collected).toLocaleString('en-IN')}`;
-  document.getElementById('fee-pending').textContent = `₹${Number(summary.pending).toLocaleString('en-IN')}`;
-}
-
-async function generateFees() {
-  const month = getSelectedMonth();
-  if (!month) {
-    showToast('Please select a month', 'warning');
-    return;
-  }
-
-  try {
-    const res = await fetch(`${API_BASE}/api/fees/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ month })
-    });
-
-    if (!res.ok) throw new Error('Failed to generate records');
-    const data = await res.json();
-    showToast(`Created ${data.created} records, skipped ${data.skipped}`, 'success');
-    loadFeeRecords();
-  } catch (err) {
-    showToast(err.message, 'error');
-  }
-}
-
-async function toggleFeeStatus(recordId, newStatus) {
-  try {
-    const res = await fetch(`${API_BASE}/api/fees/${recordId}/status`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: newStatus })
-    });
-
-    if (!res.ok) throw new Error('Failed to update status');
-    const emoji = newStatus === 'paid' ? '✅' : '❌';
-    showToast(`Status updated to ${emoji} ${newStatus}`, 'success');
-    loadFeeRecords();
-  } catch (err) {
-    showToast(err.message, 'error');
-  }
-}
-
-// ═══════════════════════════════════════════════════════
-//  WHATSAPP
+//  WHATSAPP & MONTHLY REMINDER STATUS
 // ═══════════════════════════════════════════════════════
 
 function startWhatsAppPolling() {
-  updateWhatsAppStatus();
-  waStatusInterval = setInterval(updateWhatsAppStatus, 5000);
+  clearInterval(waPollTimer);
+  updateWhatsAppStatus(true);
+  waPollTimer = setInterval(updateWhatsAppStatus, 5000);
 }
 
-async function updateWhatsAppStatus() {
+async function updateWhatsAppStatus(force = false) {
+  if (document.hidden && force !== true) return;
   try {
-    const res = await fetch(`${API_BASE}/api/whatsapp/status`);
-    if (!res.ok) return;
-    const data = await res.json();
-
-    const dot = document.getElementById('wa-dot');
-    const text = document.getElementById('wa-status-text');
-
-    dot.className = 'status-dot';
-    if (data.status === 'connected') {
-      dot.classList.add('connected');
-      text.textContent = 'WhatsApp Connected';
-    } else if (data.status === 'qr_ready' || data.status === 'connecting') {
-      dot.classList.add('connecting');
-      text.textContent = data.status === 'qr_ready' ? 'Scan QR Code' : 'Connecting...';
-    } else {
-      dot.classList.add('disconnected');
-      text.textContent = 'WhatsApp Offline';
-    }
+    const data = await api('/api/whatsapp/status');
+    const changed = data.status !== state.wa.status;
+    state.wa = data;
+    if (changed) loadReminderInfo();
+    renderReminderCard();
   } catch (err) {
-    // Server might not be running
+    // Server might be restarting
   }
 }
 
-// ─── QR Modal ──────────────────────────────────────────
-
-async function openQRModal() {
-  const modal = document.getElementById('qr-modal');
-  const content = document.getElementById('qr-content');
-  modal.classList.add('show');
-
-  // Show loading state
-  content.innerHTML = `
-    <div class="qr-loading">
-      <div class="spinner"></div>
-      <p>Loading QR code...</p>
-    </div>`;
-
+async function loadReminderInfo() {
+  clearTimeout(reminderPollTimer);
   try {
-    const res = await fetch(`${API_BASE}/api/whatsapp/qr`);
-    const data = await res.json();
+    state.reminders = await api('/api/reminders');
+    renderReminderCard();
+    // While a send is in progress, check back until it finishes
+    if (state.reminders.running) reminderPollTimer = setTimeout(loadReminderInfo, 10000);
+  } catch (err) {
+    // keep the last known info
+  }
+}
+
+function renderReminderCard() {
+  const card = $('reminder-card');
+  const status = state.wa.status;
+  const info = state.reminders;
+  const count = state.students.length;
+  const btn = $('btn-connect');
+
+  card.classList.remove('is-on', 'is-off');
+  const title = $('reminder-title');
+  const text = $('reminder-text');
+
+  if (status === 'connected') {
+    card.classList.add('is-on');
+    title.textContent = 'Monthly reminders are on';
+    if (info?.running) {
+      text.textContent = 'Sending this month\'s reminders now…';
+    } else {
+      text.textContent = info
+        ? `Next: ${formatDate(info.nextDate)} to ${count} student${count === 1 ? '' : 's'}`
+        : 'Sent on the 1st of every month';
+    }
+    btn.textContent = 'Manage';
+    btn.className = 'btn btn-sm btn-secondary';
+  } else if (status === 'connecting') {
+    title.textContent = 'Connecting to WhatsApp…';
+    text.textContent = 'This can take up to a minute';
+    btn.textContent = 'View';
+    btn.className = 'btn btn-sm btn-secondary';
+  } else if (status) {
+    card.classList.add('is-off');
+    title.textContent = 'Connect WhatsApp to send reminders';
+    text.textContent = 'Every student gets a reminder on the 1st of each month';
+    btn.textContent = 'Connect';
+    btn.className = 'btn btn-sm btn-whatsapp';
+  }
+
+  const last = $('reminder-last');
+  if (info?.lastRun) {
+    const r = info.lastRun;
+    last.textContent = `Last sent ${formatDate(r.at)} · ${r.sent} delivered${r.failed ? `, ${r.failed} failed` : ''}`;
+    last.hidden = false;
+  } else {
+    last.hidden = true;
+  }
+}
+
+// ─── QR Sheet ──────────────────────────────────────────
+
+function openQRSheet() {
+  $('qr-content').innerHTML = '<div class="qr-state"><div class="spinner"></div><p>Checking connection…</p></div>';
+  openSheet('qr-sheet');
+  refreshQR();
+  clearInterval(qrPollTimer);
+  qrPollTimer = setInterval(refreshQR, 3000);
+}
+
+async function refreshQR() {
+  if (!$('qr-sheet').classList.contains('show')) return clearInterval(qrPollTimer);
+  const content = $('qr-content');
+  try {
+    const data = await api('/api/whatsapp/qr');
+    const connected = data.status === 'connected';
+    $('qr-actions').hidden = !connected;
+    $('qr-instructions').hidden = connected;
+    $('qr-sheet-title').textContent = connected ? 'WhatsApp' : 'Connect WhatsApp';
 
     if (data.qr) {
-      content.innerHTML = `<img src="${data.qr}" alt="WhatsApp QR Code" width="280" height="280" />`;
-    } else if (data.message) {
+      const img = content.querySelector('img');
+      if (img) img.src = data.qr;
+      else content.innerHTML = `<img src="${data.qr}" alt="WhatsApp QR code" />`;
+    } else if (connected) {
       content.innerHTML = `
-        <div class="qr-loading">
-          <p style="font-size: 42px;">✅</p>
-          <p>${data.message}</p>
+        <div class="qr-state">
+          <span class="big">✅</span>
+          <p>WhatsApp is connected</p>
+          <small>Reminders go out automatically on the 1st of every month</small>
+        </div>`;
+    } else {
+      content.innerHTML = `
+        <div class="qr-state">
+          <div class="spinner"></div>
+          <p>${escapeHtml(data.message || 'Waiting for QR code…')}</p>
+          <small>This can take up to a minute after the server starts</small>
         </div>`;
     }
   } catch (err) {
     content.innerHTML = `
-      <div class="qr-loading">
-        <p style="font-size: 42px;">⚠️</p>
-        <p>Could not load QR code</p>
-        <small>Make sure the server is running</small>
+      <div class="qr-state">
+        <span class="big">⚠️</span>
+        <p>Could not reach the server</p>
+        <small>${escapeHtml(err.message)}</small>
       </div>`;
   }
 }
 
-function closeQRModal() {
-  document.getElementById('qr-modal').classList.remove('show');
-}
-
-// ─── Send Reminders ────────────────────────────────────
-
-async function sendReminders() {
-  const month = getSelectedMonth();
-  if (!month) {
-    showToast('Please select a month', 'warning');
-    return;
-  }
-
-  // Check WhatsApp status first
+async function whatsappLogout() {
+  const ok = await confirmDialog({
+    title: 'Unlink WhatsApp?',
+    message: 'Monthly reminders will stop until you scan a new QR code.',
+    confirmLabel: 'Unlink',
+    danger: true
+  });
+  if (!ok) return;
   try {
-    const statusRes = await fetch(`${API_BASE}/api/whatsapp/status`);
-    const statusData = await statusRes.json();
-    if (statusData.status !== 'connected') {
-      showToast('WhatsApp is not connected. Please scan the QR code first.', 'warning');
-      openQRModal();
-      return;
-    }
-  } catch (err) {
-    showToast('Cannot check WhatsApp status', 'error');
-    return;
-  }
-
-  // Confirm before sending
-  const unpaidCount = feeRecords.filter(r => r.status === 'unpaid').length;
-  if (unpaidCount === 0) {
-    showToast('No unpaid students for this month!', 'info');
-    return;
-  }
-
-  if (!confirm(`Send WhatsApp reminders to ${unpaidCount} unpaid student(s)?`)) return;
-
-  showToast(`Sending reminders to ${unpaidCount} students...`, 'info');
-
-  try {
-    const res = await fetch(`${API_BASE}/api/whatsapp/send-reminders`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ month })
-    });
-
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.error || 'Failed to send reminders');
-    }
-
-    const data = await res.json();
-    showToast(`✅ Sent: ${data.sent} | ❌ Failed: ${data.failed}`, data.failed > 0 ? 'warning' : 'success');
-    loadActivities();
+    await api('/api/whatsapp/logout', { method: 'POST' });
+    showToast('WhatsApp unlinked', 'success');
+    refreshQR();
+    updateWhatsAppStatus(true);
   } catch (err) {
     showToast(err.message, 'error');
   }
 }
 
 // ═══════════════════════════════════════════════════════
-//  ACTIVITY LOG
+//  SHEETS (modal dialogs)
+// ═══════════════════════════════════════════════════════
+// Each open sheet pushes a history entry, so the phone's back button closes it.
+
+const sheetStack = [];
+let popResolvers = [];
+let confirmResolver = null;
+
+function openSheet(id) {
+  const el = $(id);
+  el.style.zIndex = 1000 + sheetStack.length; // later sheets stack on top of earlier ones
+  el.classList.add('show');
+  el.querySelector('.sheet').style.transform = '';
+  sheetStack.push(id);
+  document.body.classList.add('sheet-open');
+  history.pushState({ sheet: id }, '');
+}
+
+/** Close the top sheet. Resolves once the history entry has been popped. */
+function closeSheet() {
+  if (!sheetStack.length) return Promise.resolve();
+  return new Promise(resolve => {
+    popResolvers.push(resolve);
+    history.back();
+  });
+}
+
+function hideTopSheet() {
+  const id = sheetStack.pop();
+  if (!id) return;
+  $(id).classList.remove('show');
+  if (id === 'confirm-sheet' && confirmResolver) {
+    confirmResolver(false);
+    confirmResolver = null;
+  }
+  if (id === 'qr-sheet') clearInterval(qrPollTimer);
+  if (!sheetStack.length) document.body.classList.remove('sheet-open');
+}
+
+window.addEventListener('popstate', () => {
+  if (sheetStack.length) hideTopSheet();
+  const resolvers = popResolvers;
+  popResolvers = [];
+  resolvers.forEach(r => r());
+});
+
+function confirmDialog({ title, message, confirmLabel = 'Confirm', danger = false }) {
+  $('confirm-title').textContent = title;
+  $('confirm-text').textContent = message;
+  const ok = $('btn-confirm-ok');
+  ok.textContent = confirmLabel;
+  ok.className = `btn ${danger ? 'btn-danger' : 'btn-primary'}`;
+  openSheet('confirm-sheet');
+  return new Promise(resolve => { confirmResolver = resolve; });
+}
+
+async function answerConfirm(value) {
+  const resolve = confirmResolver;
+  confirmResolver = null;
+  await closeSheet();
+  resolve?.(value);
+}
+
+/** Drag a sheet down by its handle/header to dismiss it */
+function enableSheetDrag(overlay) {
+  const sheet = overlay.querySelector('.sheet');
+  let startY = null, delta = 0;
+
+  const onStart = (e) => {
+    if (window.innerWidth >= 640) return;
+    startY = e.touches[0].clientY;
+    delta = 0;
+    sheet.style.transition = 'none';
+  };
+  const onMove = (e) => {
+    if (startY === null) return;
+    delta = Math.max(0, e.touches[0].clientY - startY);
+    sheet.style.transform = `translateY(${delta}px)`;
+  };
+  const onEnd = () => {
+    if (startY === null) return;
+    startY = null;
+    sheet.style.transition = '';
+    sheet.style.transform = '';
+    if (delta > 90) closeSheet();
+  };
+
+  overlay.querySelectorAll('.sheet-handle, .sheet-header').forEach(el => {
+    el.addEventListener('touchstart', onStart, { passive: true });
+    el.addEventListener('touchmove', onMove, { passive: true });
+    el.addEventListener('touchend', onEnd);
+  });
+}
+
+// ═══════════════════════════════════════════════════════
+//  EVENTS
 // ═══════════════════════════════════════════════════════
 
-async function loadActivities() {
-  try {
-    const res = await fetch(`${API_BASE}/api/activities?limit=30`);
-    if (!res.ok) throw new Error('Failed to load activities');
-    const activities = await res.json();
-    renderActivities(activities);
-  } catch (err) {
-    console.error('Error loading activities:', err);
-  }
+function bindEvents() {
+  $('login-form').addEventListener('submit', handleLogin);
+  $('student-form').addEventListener('submit', saveStudent);
+  $('btn-confirm-ok').addEventListener('click', () => answerConfirm(true));
+  $('btn-confirm-cancel').addEventListener('click', () => answerConfirm(false));
+  $('student-search').addEventListener('input', renderStudents);
+
+  document.querySelectorAll('.sheet-overlay').forEach(overlay => {
+    overlay.addEventListener('click', (e) => {
+      if (e.target !== overlay) return;
+      if (overlay.id === 'confirm-sheet') answerConfirm(false);
+      else closeSheet();
+    });
+    enableSheetDrag(overlay);
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !sheetStack.length) return;
+    if (sheetStack[sheetStack.length - 1] === 'confirm-sheet') answerConfirm(false);
+    else closeSheet();
+  });
+
+  // Refresh when coming back to the app
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && $('login-screen').hidden) {
+      updateWhatsAppStatus();
+      loadStudents();
+    }
+  });
+
+  document.addEventListener('click', (e) => {
+    const el = e.target.closest('[data-action]');
+    if (!el) return;
+
+    switch (el.dataset.action) {
+      case 'add-student': openStudentForm(); break;
+      case 'edit-student': {
+        const student = state.students.find(s => s.id === Number(el.dataset.id));
+        if (student) openStudentForm(student);
+        break;
+      }
+      case 'delete-student': deleteStudent(); break;
+      case 'close-sheet': closeSheet(); break;
+      case 'open-qr': openQRSheet(); break;
+      case 'wa-logout': whatsappLogout(); break;
+      case 'logout': logout(); break;
+      case 'reload': loadStudents(); break;
+    }
+  });
 }
 
-function renderActivities(activities) {
-  const container = document.getElementById('activity-list');
-
-  if (activities.length === 0) {
-    container.innerHTML = `
-      <div class="empty-state">
-        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3">
-          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-        </svg>
-        <p>No activities recorded yet</p>
-        <small>Actions will appear here as you use the system</small>
-      </div>`;
-    return;
+function registerServiceWorker() {
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
   }
-
-  container.innerHTML = activities.map(a => {
-    const dotClass = getActivityDotClass(a.action);
-    const timeAgo = formatTimeAgo(a.created_at);
-
-    return `
-      <div class="activity-item">
-        <div class="activity-dot ${dotClass}"></div>
-        <div class="activity-info">
-          <div class="activity-action">${escapeHtml(a.action)}</div>
-          <div class="activity-details">${escapeHtml(a.details || '')}</div>
-          <div class="activity-time">${timeAgo}</div>
-        </div>
-      </div>`;
-  }).join('');
-}
-
-function getActivityDotClass(action) {
-  const lower = action.toLowerCase();
-  if (lower.includes('added') || lower.includes('created')) return 'add';
-  if (lower.includes('updated') || lower.includes('status')) return 'update';
-  if (lower.includes('deleted')) return 'delete';
-  if (lower.includes('reminder') || lower.includes('whatsapp')) return 'reminder';
-  if (lower.includes('fee') || lower.includes('generated')) return 'fee';
-  return 'default';
 }
 
 // ═══════════════════════════════════════════════════════
@@ -537,19 +582,19 @@ function getActivityDotClass(action) {
 // ═══════════════════════════════════════════════════════
 
 function showToast(message, type = 'info') {
-  const container = document.getElementById('toast-container');
+  const container = $('toast-container');
   const icons = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' };
 
   const toast = document.createElement('div');
   toast.className = `toast ${type}`;
-  toast.innerHTML = `<span class="toast-icon">${icons[type] || 'ℹ️'}</span><span>${escapeHtml(message)}</span>`;
+  toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
+  toast.innerHTML = `<span class="toast-icon">${icons[type] || 'ℹ️'}</span><span class="toast-msg">${escapeHtml(message)}</span>`;
 
+  while (container.children.length >= 3) container.firstElementChild.remove();
   container.appendChild(toast);
-
-  // Auto-remove
   setTimeout(() => {
     toast.classList.add('removing');
-    setTimeout(() => toast.remove(), 300);
+    setTimeout(() => toast.remove(), 250);
   }, 4000);
 }
 
@@ -558,38 +603,46 @@ function showToast(message, type = 'info') {
 // ═══════════════════════════════════════════════════════
 
 function escapeHtml(str) {
-  if (!str) return '';
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
+  if (str == null) return '';
+  return String(str).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-function formatTimeAgo(dateStr) {
-  const date = new Date(dateStr);
-  const now = new Date();
-  const diff = Math.floor((now - date) / 1000);
-
-  if (diff < 60) return 'Just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
-  return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+function setLoading(btn, loading) {
+  if (!btn) return;
+  btn.classList.toggle('loading', loading);
+  btn.disabled = loading;
 }
 
-// ─── Close modals on Escape key ────────────────────────
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') {
-    closeStudentModal();
-    closeQRModal();
-    closeConfirmModal();
-  }
-});
+function skeletons(count) {
+  return Array.from({ length: count }, () => '<div class="skeleton"></div>').join('');
+}
 
-// ─── Close modals on overlay click ─────────────────────
-document.querySelectorAll('.modal-overlay').forEach(overlay => {
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) {
-      overlay.classList.remove('show');
-    }
-  });
-});
+function initials(name = '') {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  return ((parts[0]?.[0] || '?') + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
+}
+
+function avatar(name = '') {
+  let hue = 0;
+  for (const ch of name) hue = (hue * 31 + ch.charCodeAt(0)) % 360;
+  return `<span class="avatar" style="--hue:${hue}" aria-hidden="true">${escapeHtml(initials(name))}</span>`;
+}
+
+function formatPhone(phone) {
+  let digits = String(phone || '').replace(/\D/g, '');
+  if (digits.length === 11 && digits.startsWith('0')) digits = digits.slice(1);
+  if (digits.length === 10) digits = '91' + digits;
+  if (digits.length === 12 && digits.startsWith('91')) return `+91 ${digits.slice(2, 7)} ${digits.slice(7)}`;
+  return digits ? `+${digits}` : '';
+}
+
+function formatMoney(value) {
+  return `₹${(Number(value) || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+}
+
+function formatDate(dateStr) {
+  // 'YYYY-MM-DD' strings are calendar dates — format them without timezone shifting
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+  if (m) return `${Number(m[3])} ${MONTH_NAMES[Number(m[2]) - 1].slice(0, 3)} ${m[1]}`;
+  return new Date(dateStr).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+}
