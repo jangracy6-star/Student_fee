@@ -47,14 +47,19 @@ npm start
 
 Open http://localhost:3000, tap **Connect** on the WhatsApp card, and scan the QR code with WhatsApp → *Settings → Linked Devices*.
 
-### Docker
+## Deploy on Render (free)
 
-```bash
-docker build -t feeflow .
-docker run -p 3000:3000 --env-file .env -v feeflow-wa:/app/.wwebjs_auth feeflow
-```
+1. Go to **https://render.com/deploy?repo=https://github.com/jangracy6-star/Student_fee** and sign in with GitHub.
+2. Render reads `render.yaml` and asks for:
+   - `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`, from Supabase → Project Settings → API
+   - `INSTITUTION_NAME`, your institute's name for the reminder message
+3. Click **Apply**. The first build takes about 5 minutes.
+4. Open the `.onrender.com` link, tap **Connect**, and scan the QR code once.
 
-The volume keeps the WhatsApp login across restarts.
+Notes for the free plan:
+- The app pings itself every 10 minutes so Render doesn't put it to sleep. One always-on app fits in Render's 750 free hours a month.
+- The WhatsApp login is saved in your Supabase storage (bucket `whatsapp-session`), so restarts and redeploys don't need a new QR scan.
+- Every push to `main` redeploys automatically.
 
 ## How it works
 
@@ -69,6 +74,7 @@ The volume keeps the WhatsApp login across restarts.
 server.js       Express API, auth, monthly reminder schedule
 database.js     Supabase queries
 whatsapp.js     WhatsApp client, reconnects, reminder messages
+session-store.js  Saves the WhatsApp login to Supabase Storage
 auth.js         Optional password login (signed HttpOnly cookie)
 public/         Frontend (HTML/CSS/JS, PWA manifest and service worker)
 ```

@@ -2,10 +2,16 @@
  * WhatsApp Module — Client Setup & Message Sending
  * Uses whatsapp-web.js for free WhatsApp Web automation
  */
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const path = require('path');
+const { Client, RemoteAuth } = require('whatsapp-web.js');
 const QRCode = require('qrcode');
+const { supabase } = require('./database');
+const { SupabaseSessionStore } = require('./session-store');
 
 const RECONNECT_DELAY_MS = 10000;
+const DATA_PATH = path.resolve('./.wwebjs_auth');
+// The WhatsApp login is backed up to Supabase so a restart doesn't need a new QR scan
+const sessionStore = new SupabaseSessionStore(supabase, DATA_PATH);
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
 
@@ -24,7 +30,11 @@ function initWhatsApp(onReady) {
   statusMessage = 'Starting WhatsApp...';
 
   client = new Client({
-    authStrategy: new LocalAuth(),
+    authStrategy: new RemoteAuth({
+      store: sessionStore,
+      dataPath: DATA_PATH,
+      backupSyncIntervalMs: 5 * 60 * 1000
+    }),
     puppeteer: {
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
@@ -34,6 +44,8 @@ function initWhatsApp(onReady) {
         '--disable-dev-shm-usage',
         '--disable-accelerated-2d-canvas',
         '--no-first-run',
+        '--no-zygote',
+        '--disable-extensions',
         '--disable-gpu'
       ]
     }
@@ -56,6 +68,10 @@ function initWhatsApp(onReady) {
     statusMessage = 'WhatsApp connected successfully';
     qrCodeDataUrl = null;
     onReadyCallback?.();
+  });
+
+  client.on('remote_session_saved', () => {
+    console.log('💾 WhatsApp login saved to Supabase');
   });
 
   client.on('authenticated', () => {

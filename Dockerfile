@@ -1,29 +1,22 @@
-# Use a base image with Node.js and all required dependencies for Puppeteer/Chromium
-FROM ghcr.io/puppeteer/puppeteer:latest
+# Node.js with the system Chromium that whatsapp-web.js drives
+FROM node:20-slim
 
-# Switch to root user to copy files and set permissions if needed
-USER root
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends chromium fonts-liberation ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 
-# Set the working directory in the container
+# Use the system Chromium instead of downloading another copy during npm install
+ENV PUPPETEER_SKIP_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
+    NODE_ENV=production
+
 WORKDIR /app
 
-# Copy package.json and package-lock.json first to leverage Docker cache
+# Install dependencies first to leverage Docker layer caching
 COPY package*.json ./
+RUN npm ci --omit=dev
 
-# Install application dependencies
-# We use npm ci for predictable builds if package-lock is present, otherwise npm install
-RUN npm install
-
-# Copy the rest of the application files
 COPY . .
 
-# Set environment variables for Puppeteer
-# The image we're using already includes Chromium, so we tell Puppeteer to use it
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
-
-# Expose the port the app runs on
 EXPOSE 3000
-
-# Start the application
-CMD ["npm", "start"]
+CMD ["node", "server.js"]

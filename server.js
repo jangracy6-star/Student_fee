@@ -219,6 +219,15 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// ─── Keep-alive on Render ──────────────────────────────
+// Render's free tier sleeps after 15 minutes without traffic, and a sleeping
+// server can't send reminders. Pinging our own public URL keeps it awake.
+if (process.env.RENDER_EXTERNAL_URL) {
+  setInterval(() => {
+    fetch(`${process.env.RENDER_EXTERNAL_URL}/api/health`).catch(() => {});
+  }, 10 * 60 * 1000);
+}
+
 // ─── Start Server ──────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`\n🚀 Student Fee Management System`);
