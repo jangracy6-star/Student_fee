@@ -1,0 +1,9 @@
+node_modules
+.env
+.git
+.gitignore
+.wwebjs_auth
+.wwebjs_cache
+npm-debug.log
+Dockerfile
+.dockerignore
