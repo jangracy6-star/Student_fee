@@ -8,7 +8,8 @@ RUN apt-get update \
 # Use the system Chromium instead of downloading another copy during npm install
 ENV PUPPETEER_SKIP_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
-    NODE_ENV=production
+    NODE_ENV=production \
+    NODE_OPTIONS=--max-old-space-size=160
 
 WORKDIR /app
 

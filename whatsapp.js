@@ -38,6 +38,7 @@ function initWhatsApp(onReady) {
     puppeteer: {
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+      // Low-memory flags so Chromium fits in small hosts like Render's free 512 MB instance
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -45,8 +46,16 @@ function initWhatsApp(onReady) {
         '--disable-accelerated-2d-canvas',
         '--no-first-run',
         '--no-zygote',
+        '--single-process',
+        '--disable-gpu',
         '--disable-extensions',
-        '--disable-gpu'
+        '--disable-background-networking',
+        '--disable-default-apps',
+        '--disable-sync',
+        '--mute-audio',
+        '--renderer-process-limit=1',
+        '--disable-features=site-per-process,Translate,BackForwardCache,MediaRouter',
+        '--js-flags=--max-old-space-size=256'
       ]
     }
   });
