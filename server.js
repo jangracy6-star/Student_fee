@@ -219,6 +219,11 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// A failed background task (e.g. a WhatsApp session backup) should be logged, not crash the server
+process.on('unhandledRejection', (err) => {
+  console.error('⚠️  Unhandled error:', err?.message || err);
+});
+
 // ─── Keep-alive on Render ──────────────────────────────
 // Render's free tier sleeps after 15 minutes without traffic, and a sleeping
 // server can't send reminders. Pinging our own public URL keeps it awake.

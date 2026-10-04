@@ -1,5 +1,5 @@
 # Node.js with the system Chromium that whatsapp-web.js drives
-FROM node:20-slim
+FROM node:22-slim
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends chromium fonts-liberation ca-certificates \
