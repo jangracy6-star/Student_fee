@@ -1,6 +1,6 @@
-# FeeFlow — Student Fee Reminders
+# Student Fees — WhatsApp Fee Reminders
 
-A simple mobile-friendly app: **add your students, and every month each one automatically gets a WhatsApp fee reminder.**
+A clean, minimal, mobile-first app (light & dark mode): **add your students, and every month each one automatically gets a WhatsApp fee reminder.**
 
 - Add, edit, or delete students (name, WhatsApp number, class, monthly fee).
 - Mark each student **Paid / Not paid** for the current month with one tap, and filter the list by All / Not paid / Paid. Everyone starts the month as *Not paid*.

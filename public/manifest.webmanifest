@@ -1,16 +1,28 @@
 {
-  "name": "FeeFlow — Student Fee Manager",
-  "short_name": "FeeFlow",
-  "description": "Track student fees and send WhatsApp reminders.",
+  "name": "Student Fees",
+  "short_name": "Fees",
+  "description": "Track monthly student fees and send automatic WhatsApp reminders.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#07070e",
-  "theme_color": "#0d0d1a",
+  "background_color": "#f6f6f7",
+  "theme_color": "#f6f6f7",
   "icons": [
-    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
-    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
   ]
 }

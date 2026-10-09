@@ -8,7 +8,7 @@ const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
 
 // ─── State ─────────────────────────────────────────────
 const state = {
-  config: { institution: 'Student Fee Reminders', authEnabled: false, currentMonth: null },
+  config: { institution: 'Student Fees', authEnabled: false, currentMonth: null },
   students: [],
   filter: 'all', // 'all' | 'paid' | 'unpaid'
   studentsLoaded: false,
@@ -45,7 +45,7 @@ async function startApp() {
   }
   $('institution-name').textContent = state.config.institution;
   $('btn-logout').hidden = !state.config.authEnabled;
-  document.title = `FeeFlow — ${state.config.institution}`;
+  document.title = state.config.institution;
 
   loadStudents();
   startWhatsAppPolling();
@@ -114,7 +114,7 @@ async function logout() {
 // ═══════════════════════════════════════════════════════
 
 async function loadStudents() {
-  if (!state.studentsLoaded) $('students-list').innerHTML = skeletons(4);
+  if (!state.studentsLoaded) $('students-list').innerHTML = skeletons(5);
   try {
     state.students = await api('/api/students');
     state.studentsLoaded = true;
@@ -126,9 +126,10 @@ async function loadStudents() {
     showToast(err.message || 'Failed to load students', 'error');
     if (!state.studentsLoaded) {
       $('students-list').innerHTML = `
-        <div class="empty-state">
-          <svg class="i"><use href="#i-x"/></svg>
-          <p>Could not load students</p>
+        <div class="empty">
+          <svg class="i"><use href="#i-alert"/></svg>
+          <p>Couldn't load students</p>
+          <small>Check your connection and try again.</small>
           <button class="btn btn-secondary" data-action="reload">Try again</button>
         </div>`;
     }
@@ -140,14 +141,21 @@ function renderStudents() {
   const total = state.students.length;
   const query = $('student-search').value.trim().toLowerCase();
   const paidCount = state.students.filter(s => s.paid).length;
-  const pending = state.students.filter(s => !s.paid).reduce((sum, s) => sum + Number(s.fee_amount || 0), 0);
+  const sumFees = (list) => list.reduce((sum, s) => sum + Number(s.fee_amount || 0), 0);
+  const collected = sumFees(state.students.filter(s => s.paid));
+  const pending = sumFees(state.students.filter(s => !s.paid));
 
-  const month = state.config.currentMonth ? `${formatMonth(state.config.currentMonth)} · ` : '';
-  $('students-count').textContent = total
-    ? `${month}${paidCount} of ${total} paid${pending ? ` · ${formatMoney(pending)} pending` : ''}`
-    : '0 students';
+  $('month-label').textContent = state.config.currentMonth
+    ? `${formatMonth(state.config.currentMonth)} · ${total} student${total === 1 ? '' : 's'}`
+    : `${total} student${total === 1 ? '' : 's'}`;
+  $('stats').hidden = total === 0;
+  $('stat-collected').textContent = formatMoney(collected);
+  $('stat-pending').textContent = formatMoney(pending);
+  $('stat-paid').textContent = `${paidCount}/${total}`;
+  $('stat-progress').style.width = total ? `${(paidCount / total) * 100}%` : '0';
+  $('stat-progressbar').setAttribute('aria-valuenow', total ? Math.round((paidCount / total) * 100) : 0);
+  $('toolbar').hidden = total === 0;
   $('search-bar').hidden = total < 6;
-  $('pay-filter').hidden = total === 0;
   $('count-all').textContent = total;
   $('count-paid').textContent = paidCount;
   $('count-unpaid').textContent = total - paidCount;
@@ -160,37 +168,38 @@ function renderStudents() {
 
   if (total === 0) {
     list.innerHTML = `
-      <div class="empty-state">
+      <div class="empty">
         <svg class="i"><use href="#i-users"/></svg>
         <p>No students yet</p>
-        <small>Add a student and they'll get a WhatsApp fee reminder on the 1st of every month</small>
-        <button class="btn btn-primary" data-action="add-student"><svg class="i"><use href="#i-plus"/></svg> Add Student</button>
+        <small>Each student you add gets a WhatsApp fee reminder on the 1st of every month.</small>
+        <button class="btn btn-primary" data-action="add-student"><svg class="i"><use href="#i-plus"/></svg> Add student</button>
       </div>`;
     return;
   }
 
   if (students.length === 0) {
-    const message = query ? 'No matches'
-      : state.filter === 'unpaid' ? 'Everyone has paid this month 🎉'
-      : 'Nobody has paid yet this month';
-    list.innerHTML = `<div class="empty-state"><svg class="i"><use href="#i-${query ? 'search' : 'check'}"/></svg><p>${message}</p></div>`;
+    const [icon, title] = query ? ['search', 'No results']
+      : state.filter === 'unpaid' ? ['check-circle', 'Everyone has paid']
+      : ['users', 'No payments yet this month'];
+    list.innerHTML = `<div class="empty"><svg class="i"><use href="#i-${icon}"/></svg><p>${title}</p></div>`;
     return;
   }
 
-  list.innerHTML = students.map(s => `
-    <div class="item-card ${s.paid ? 'is-paid' : ''}">
-      <button class="item-open" data-action="edit-student" data-id="${s.id}" aria-label="Edit ${escapeHtml(s.name)}">
+  list.innerHTML = `<div class="list">${students.map(s => `
+    <div class="row">
+      <button class="row-main" data-action="edit-student" data-id="${s.id}" aria-label="Edit ${escapeHtml(s.name)}">
         ${avatar(s.name)}
-        <span class="item-main">
-          <span class="item-title">${escapeHtml(s.name)}</span>
-          <span class="item-meta">${escapeHtml(s.class_name)} · ${formatMoney(s.fee_amount)}/month</span>
+        <span class="row-text">
+          <span class="row-title">${escapeHtml(s.name)}</span>
+          <span class="row-meta">${escapeHtml(s.class_name)} · ${formatMoney(s.fee_amount)}</span>
         </span>
       </button>
-      <button class="pay-toggle ${s.paid ? 'paid' : 'unpaid'}" data-action="toggle-paid" data-id="${s.id}"
-        aria-pressed="${s.paid}" title="${s.paid && s.paid_date ? `Paid on ${formatDate(s.paid_date)} — tap to mark not paid` : 'Tap to mark paid'}">
-        ${s.paid ? '<svg class="i"><use href="#i-check"/></svg> Paid' : 'Not paid'}
+      <button class="status ${s.paid ? 'paid' : 'unpaid'}" data-action="toggle-paid" data-id="${s.id}" aria-pressed="${!!s.paid}"
+        aria-label="${escapeHtml(s.name)}: ${s.paid ? 'paid' : 'unpaid'}. Tap to change."
+        title="${s.paid && s.paid_date ? `Paid ${formatDate(s.paid_date)}` : 'Tap to mark paid'}">
+        ${s.paid ? '<svg class="i"><use href="#i-check"/></svg>Paid' : 'Unpaid'}
       </button>
-    </div>`).join('');
+    </div>`).join('')}</div>`;
 }
 
 /** Flip a student between paid / not paid for this month, with Undo */
@@ -208,7 +217,7 @@ async function togglePaid(id, { undo = false } = {}) {
     const result = await api(`/api/students/${id}/payment`, { method: 'PUT', body: { paid } });
     student.paid_date = result.paid_date;
     if (!undo) {
-      showToast(`${student.name} marked ${paid ? 'paid' : 'not paid'}`, 'success', {
+      showToast(`${student.name} marked ${paid ? 'paid' : 'unpaid'}`, 'success', {
         actionLabel: 'Undo',
         onAction: () => togglePaid(id, { undo: true })
       });
@@ -226,7 +235,7 @@ function openStudentForm(student = null) {
   form.querySelectorAll('.invalid').forEach(el => el.classList.remove('invalid'));
   $('student-form-error').hidden = true;
   $('student-edit-id').value = student ? student.id : '';
-  $('student-sheet-title').textContent = student ? 'Edit Student' : 'Add Student';
+  $('student-sheet-title').textContent = student ? 'Edit student' : 'Add student';
   $('btn-delete-student').hidden = !student;
   $('btn-cancel-student').hidden = !!student;
 
@@ -366,33 +375,33 @@ function renderReminderCard() {
 
   if (status === 'connected') {
     card.classList.add('is-on');
-    title.textContent = 'Monthly reminders are on';
+    title.textContent = 'Reminders on';
     if (info?.running) {
-      text.textContent = 'Sending this month\'s reminders now…';
+      text.textContent = 'Sending this month\'s reminders…';
     } else {
       text.textContent = info
-        ? `Next: ${formatDate(info.nextDate)} to ${count} student${count === 1 ? '' : 's'}`
+        ? `Next on ${formatDate(info.nextDate, true)} · ${count} student${count === 1 ? '' : 's'}`
         : 'Sent on the 1st of every month';
     }
     btn.textContent = 'Manage';
     btn.className = 'btn btn-sm btn-secondary';
   } else if (status === 'connecting') {
-    title.textContent = 'Connecting to WhatsApp…';
+    title.textContent = 'Connecting WhatsApp…';
     text.textContent = 'This can take up to a minute';
     btn.textContent = 'View';
     btn.className = 'btn btn-sm btn-secondary';
   } else if (status) {
     card.classList.add('is-off');
-    title.textContent = 'Connect WhatsApp to send reminders';
-    text.textContent = 'Every student gets a reminder on the 1st of each month';
+    title.textContent = 'Reminders paused';
+    text.textContent = 'Connect WhatsApp to send them on the 1st';
     btn.textContent = 'Connect';
-    btn.className = 'btn btn-sm btn-whatsapp';
+    btn.className = 'btn btn-sm btn-primary';
   }
 
   const last = $('reminder-last');
   if (info?.lastRun) {
     const r = info.lastRun;
-    last.textContent = `Last sent ${formatDate(r.at)} · ${r.sent} delivered${r.failed ? `, ${r.failed} failed` : ''}`;
+    last.textContent = `Last sent ${formatDate(r.at, true)} · ${r.sent} delivered${r.failed ? `, ${r.failed} failed` : ''}`;
     last.hidden = false;
   } else {
     last.hidden = true;
@@ -426,23 +435,23 @@ async function refreshQR() {
     } else if (connected) {
       content.innerHTML = `
         <div class="qr-state">
-          <span class="big">✅</span>
+          <svg class="i ok"><use href="#i-check-circle"/></svg>
           <p>WhatsApp is connected</p>
-          <small>Reminders go out automatically on the 1st of every month</small>
+          <small>Reminders go out automatically on the 1st of every month.</small>
         </div>`;
     } else {
       content.innerHTML = `
         <div class="qr-state">
           <div class="spinner"></div>
           <p>${escapeHtml(data.message || 'Waiting for QR code…')}</p>
-          <small>This can take up to a minute after the server starts</small>
+          <small>This can take up to a minute after the server starts.</small>
         </div>`;
     }
   } catch (err) {
     content.innerHTML = `
       <div class="qr-state">
-        <span class="big">⚠️</span>
-        <p>Could not reach the server</p>
+        <svg class="i warn"><use href="#i-alert"/></svg>
+        <p>Couldn't reach the server</p>
         <small>${escapeHtml(err.message)}</small>
       </div>`;
   }
@@ -633,12 +642,13 @@ function registerServiceWorker() {
 
 function showToast(message, type = 'info', { actionLabel, onAction } = {}) {
   const container = $('toast-container');
-  const icons = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' };
+  const icons = { success: 'check-circle', error: 'alert', warning: 'alert', info: 'alert' };
 
   const toast = document.createElement('div');
-  toast.className = `toast ${type}`;
+  toast.className = `toast ${type}${actionLabel ? ' has-action' : ''}`;
   toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
-  toast.innerHTML = `<span class="toast-icon">${icons[type] || 'ℹ️'}</span><span class="toast-msg">${escapeHtml(message)}</span>`;
+  toast.innerHTML = `<span class="toast-icon"><svg class="i"><use href="#i-${icons[type] || 'alert'}"/></svg></span>` +
+    `<span class="toast-msg">${escapeHtml(message)}</span>`;
 
   const remove = () => {
     if (toast.classList.contains('removing')) return;
@@ -678,7 +688,13 @@ function setLoading(btn, loading) {
 }
 
 function skeletons(count) {
-  return Array.from({ length: count }, () => '<div class="skeleton"></div>').join('');
+  const row = `
+    <div class="skeleton-row">
+      <span class="sk" style="width:36px;height:36px;border-radius:50%"></span>
+      <span style="flex:1;display:grid;gap:6px"><span class="sk" style="width:45%;height:12px"></span><span class="sk" style="width:30%;height:10px"></span></span>
+      <span class="sk" style="width:72px;height:28px;border-radius:14px"></span>
+    </div>`;
+  return `<div class="list">${row.repeat(count)}</div>`;
 }
 
 function initials(name = '') {
@@ -687,17 +703,7 @@ function initials(name = '') {
 }
 
 function avatar(name = '') {
-  let hue = 0;
-  for (const ch of name) hue = (hue * 31 + ch.charCodeAt(0)) % 360;
-  return `<span class="avatar" style="--hue:${hue}" aria-hidden="true">${escapeHtml(initials(name))}</span>`;
-}
-
-function formatPhone(phone) {
-  let digits = String(phone || '').replace(/\D/g, '');
-  if (digits.length === 11 && digits.startsWith('0')) digits = digits.slice(1);
-  if (digits.length === 10) digits = '91' + digits;
-  if (digits.length === 12 && digits.startsWith('91')) return `+91 ${digits.slice(2, 7)} ${digits.slice(7)}`;
-  return digits ? `+${digits}` : '';
+  return `<span class="avatar" aria-hidden="true">${escapeHtml(initials(name))}</span>`;
 }
 
 function formatMoney(value) {
@@ -709,9 +715,11 @@ function formatMonth(month) {
   return `${MONTH_NAMES[Number(mon) - 1]} ${year}`;
 }
 
-function formatDate(dateStr) {
-  // 'YYYY-MM-DD' strings are calendar dates — format them without timezone shifting
+/** "1 Nov 2026"; with `short`, the year is dropped when it's the current year */
+function formatDate(dateStr, short = false) {
+  // 'YYYY-MM-DD' strings are calendar dates — read them without timezone shifting
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
-  if (m) return `${Number(m[3])} ${MONTH_NAMES[Number(m[2]) - 1].slice(0, 3)} ${m[1]}`;
-  return new Date(dateStr).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  const date = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(dateStr);
+  const sameYear = date.getFullYear() === new Date().getFullYear();
+  return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', ...(short && sameYear ? {} : { year: 'numeric' }) });
 }
