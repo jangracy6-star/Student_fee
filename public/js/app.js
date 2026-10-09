@@ -8,8 +8,9 @@ const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
 
 // ─── State ─────────────────────────────────────────────
 const state = {
-  config: { institution: 'Student Fee Reminders', authEnabled: false },
+  config: { institution: 'Student Fee Reminders', authEnabled: false, currentMonth: null },
   students: [],
+  filter: 'all', // 'all' | 'paid' | 'unpaid'
   studentsLoaded: false,
   wa: { status: null },
   reminders: null
@@ -138,12 +139,24 @@ function renderStudents() {
   const list = $('students-list');
   const total = state.students.length;
   const query = $('student-search').value.trim().toLowerCase();
+  const paidCount = state.students.filter(s => s.paid).length;
+  const pending = state.students.filter(s => !s.paid).reduce((sum, s) => sum + Number(s.fee_amount || 0), 0);
 
-  $('students-count').textContent = `${total} student${total === 1 ? '' : 's'}`;
+  const month = state.config.currentMonth ? `${formatMonth(state.config.currentMonth)} · ` : '';
+  $('students-count').textContent = total
+    ? `${month}${paidCount} of ${total} paid${pending ? ` · ${formatMoney(pending)} pending` : ''}`
+    : '0 students';
   $('search-bar').hidden = total < 6;
+  $('pay-filter').hidden = total === 0;
+  $('count-all').textContent = total;
+  $('count-paid').textContent = paidCount;
+  $('count-unpaid').textContent = total - paidCount;
+  document.querySelectorAll('#pay-filter .segment').forEach(b => b.classList.toggle('active', b.dataset.filter === state.filter));
 
-  const students = state.students.filter(s => !query ||
-    s.name.toLowerCase().includes(query) || s.phone.includes(query) || s.class_name.toLowerCase().includes(query));
+  const students = state.students
+    .filter(s => state.filter === 'all' || (state.filter === 'paid') === !!s.paid)
+    .filter(s => !query ||
+      s.name.toLowerCase().includes(query) || s.phone.includes(query) || s.class_name.toLowerCase().includes(query));
 
   if (total === 0) {
     list.innerHTML = `
@@ -157,22 +170,54 @@ function renderStudents() {
   }
 
   if (students.length === 0) {
-    list.innerHTML = `<div class="empty-state"><svg class="i"><use href="#i-search"/></svg><p>No matches</p></div>`;
+    const message = query ? 'No matches'
+      : state.filter === 'unpaid' ? 'Everyone has paid this month 🎉'
+      : 'Nobody has paid yet this month';
+    list.innerHTML = `<div class="empty-state"><svg class="i"><use href="#i-${query ? 'search' : 'check'}"/></svg><p>${message}</p></div>`;
     return;
   }
 
   list.innerHTML = students.map(s => `
-    <button class="item-card" data-action="edit-student" data-id="${s.id}">
-      ${avatar(s.name)}
-      <span class="item-main">
-        <span class="item-title">${escapeHtml(s.name)}</span>
-        <span class="item-meta">${escapeHtml(s.class_name)} · ${escapeHtml(formatPhone(s.phone))}</span>
-      </span>
-      <span class="item-side">
-        <span class="amount">${formatMoney(s.fee_amount)}</span>
-        <span class="item-sub">per month</span>
-      </span>
-    </button>`).join('');
+    <div class="item-card ${s.paid ? 'is-paid' : ''}">
+      <button class="item-open" data-action="edit-student" data-id="${s.id}" aria-label="Edit ${escapeHtml(s.name)}">
+        ${avatar(s.name)}
+        <span class="item-main">
+          <span class="item-title">${escapeHtml(s.name)}</span>
+          <span class="item-meta">${escapeHtml(s.class_name)} · ${formatMoney(s.fee_amount)}/month</span>
+        </span>
+      </button>
+      <button class="pay-toggle ${s.paid ? 'paid' : 'unpaid'}" data-action="toggle-paid" data-id="${s.id}"
+        aria-pressed="${s.paid}" title="${s.paid && s.paid_date ? `Paid on ${formatDate(s.paid_date)} — tap to mark not paid` : 'Tap to mark paid'}">
+        ${s.paid ? '<svg class="i"><use href="#i-check"/></svg> Paid' : 'Not paid'}
+      </button>
+    </div>`).join('');
+}
+
+/** Flip a student between paid / not paid for this month, with Undo */
+async function togglePaid(id, { undo = false } = {}) {
+  const student = state.students.find(s => s.id === id);
+  if (!student) return;
+  const previous = { paid: student.paid, paid_date: student.paid_date };
+  const paid = !student.paid;
+
+  // Update the screen straight away; roll back if the server says no
+  Object.assign(student, { paid, paid_date: paid ? new Date().toISOString() : null });
+  renderStudents();
+
+  try {
+    const result = await api(`/api/students/${id}/payment`, { method: 'PUT', body: { paid } });
+    student.paid_date = result.paid_date;
+    if (!undo) {
+      showToast(`${student.name} marked ${paid ? 'paid' : 'not paid'}`, 'success', {
+        actionLabel: 'Undo',
+        onAction: () => togglePaid(id, { undo: true })
+      });
+    }
+  } catch (err) {
+    Object.assign(student, previous);
+    renderStudents();
+    showToast(err.message, 'error');
+  }
 }
 
 function openStudentForm(student = null) {
@@ -526,6 +571,10 @@ function bindEvents() {
   $('btn-confirm-ok').addEventListener('click', () => answerConfirm(true));
   $('btn-confirm-cancel').addEventListener('click', () => answerConfirm(false));
   $('student-search').addEventListener('input', renderStudents);
+  document.querySelectorAll('#pay-filter .segment').forEach(b => b.addEventListener('click', () => {
+    state.filter = b.dataset.filter;
+    renderStudents();
+  }));
 
   document.querySelectorAll('.sheet-overlay').forEach(overlay => {
     overlay.addEventListener('click', (e) => {
@@ -562,6 +611,7 @@ function bindEvents() {
         break;
       }
       case 'delete-student': deleteStudent(); break;
+      case 'toggle-paid': togglePaid(Number(el.dataset.id)); break;
       case 'close-sheet': closeSheet(); break;
       case 'open-qr': openQRSheet(); break;
       case 'wa-logout': whatsappLogout(); break;
@@ -581,7 +631,7 @@ function registerServiceWorker() {
 //  TOAST NOTIFICATIONS
 // ═══════════════════════════════════════════════════════
 
-function showToast(message, type = 'info') {
+function showToast(message, type = 'info', { actionLabel, onAction } = {}) {
   const container = $('toast-container');
   const icons = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' };
 
@@ -590,12 +640,26 @@ function showToast(message, type = 'info') {
   toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
   toast.innerHTML = `<span class="toast-icon">${icons[type] || 'ℹ️'}</span><span class="toast-msg">${escapeHtml(message)}</span>`;
 
-  while (container.children.length >= 3) container.firstElementChild.remove();
-  container.appendChild(toast);
-  setTimeout(() => {
+  const remove = () => {
+    if (toast.classList.contains('removing')) return;
     toast.classList.add('removing');
     setTimeout(() => toast.remove(), 250);
-  }, 4000);
+  };
+
+  if (actionLabel) {
+    const btn = document.createElement('button');
+    btn.className = 'toast-action';
+    btn.textContent = actionLabel;
+    btn.addEventListener('click', () => {
+      remove();
+      onAction?.();
+    });
+    toast.appendChild(btn);
+  }
+
+  while (container.children.length >= 3) container.firstElementChild.remove();
+  container.appendChild(toast);
+  setTimeout(remove, actionLabel ? 6000 : 4000);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -638,6 +702,11 @@ function formatPhone(phone) {
 
 function formatMoney(value) {
   return `₹${(Number(value) || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+}
+
+function formatMonth(month) {
+  const [year, mon] = month.split('-');
+  return `${MONTH_NAMES[Number(mon) - 1]} ${year}`;
 }
 
 function formatDate(dateStr) {

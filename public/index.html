@@ -93,6 +93,12 @@
       </button>
     </div>
 
+    <div class="segmented" id="pay-filter" role="tablist" aria-label="Filter by payment" hidden>
+      <button class="segment active" data-filter="all">All <span id="count-all">0</span></button>
+      <button class="segment" data-filter="unpaid">Not paid <span id="count-unpaid">0</span></button>
+      <button class="segment" data-filter="paid">Paid <span id="count-paid">0</span></button>
+    </div>
+
     <label class="search-bar" id="search-bar" hidden>
       <svg class="i"><use href="#i-search"/></svg>
       <input type="search" placeholder="Search students" id="student-search" autocomplete="off" />

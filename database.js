@@ -87,6 +87,37 @@ async function deleteStudent(id) {
   return { success: true };
 }
 
+// ─── Payments ──────────────────────────────────────────
+// A fee_records row per student per month ('YYYY-MM') with status 'paid' or 'unpaid'.
+// No row means not paid yet.
+
+/** Map of student_id → fee record for the month */
+async function getPaymentsForMonth(month) {
+  const { data, error } = await supabase
+    .from('fee_records')
+    .select('student_id, status, paid_date')
+    .eq('month', month);
+  if (error) throw error;
+  return new Map(data.map(r => [r.student_id, r]));
+}
+
+async function setPaymentStatus(studentId, month, paid) {
+  const { data, error } = await supabase
+    .from('fee_records')
+    .upsert({
+      student_id: studentId,
+      month,
+      status: paid ? 'paid' : 'unpaid',
+      paid_date: paid ? new Date().toISOString() : null
+    }, { onConflict: 'student_id,month' })
+    .select('student_id, status, paid_date, students (name)')
+    .single();
+  if (error) throw error;
+
+  await logActivity('Fee Status Updated', `${data.students?.name} → ${paid ? '✅ paid' : '❌ not paid'} (${month})`);
+  return data;
+}
+
 // ─── Monthly Reminder Log ──────────────────────────────
 // Each month's reminder run is recorded in activity_log as
 // "Monthly Reminders" with details "Month: YYYY-MM | Sent: n, Failed: n".
@@ -132,6 +163,8 @@ module.exports = {
   createStudent,
   updateStudent,
   deleteStudent,
+  getPaymentsForMonth,
+  setPaymentStatus,
   getLastReminderRun,
   logReminderRun,
   logActivity

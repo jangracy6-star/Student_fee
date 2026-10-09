@@ -3,8 +3,9 @@
 A simple mobile-friendly app: **add your students, and every month each one automatically gets a WhatsApp fee reminder.**
 
 - Add, edit, or delete students (name, WhatsApp number, class, monthly fee).
+- Mark each student **Paid / Not paid** for the current month with one tap, and filter the list by All / Not paid / Paid. Everyone starts the month as *Not paid*.
 - Link WhatsApp once by scanning a QR code.
-- On the **1st of every month**, every student receives a reminder like:
+- On the **1st of every month**, every student not already marked paid receives a reminder like:
 
   > 🎓 *Fee Reminder — Student Academy*
   > Dear *Ravi Kumar*, this is a gentle reminder that your fee of *₹3,000* for the month of *November 2026* is due…
@@ -59,11 +60,12 @@ Open http://localhost:3000, tap **Connect** on the WhatsApp card, and scan the Q
 Notes for the free plan:
 - The app pings itself every 10 minutes so Render doesn't put it to sleep. One always-on app fits in Render's 750 free hours a month.
 - The WhatsApp login is saved in your Supabase storage (bucket `whatsapp-session`), so restarts and redeploys don't need a new QR scan.
-- Every push to `main` redeploys automatically.
+- If a push to `main` doesn't redeploy on its own, use **Manual Deploy → Deploy latest commit** in Render.
 
 ## How it works
 
-- Reminders are sent on the **1st of every month** (in `TIMEZONE`, default India time) to every student.
+- Reminders are sent on the **1st of every month** (in `TIMEZONE`, default India time) to every student, except anyone already marked paid for that month (e.g. paid in advance).
+- Paid / not paid is stored per student per month in the `fee_records` table.
 - If the server was asleep or WhatsApp was disconnected on the 1st, the reminders go out as soon as it's back, up to the **3rd** of the month. They are never sent twice in the same month.
 - 10-digit phone numbers are treated as Indian (`+91` is added).
 - If WhatsApp disconnects, the server reconnects on its own. If the session has expired, open the app and scan the new QR code.

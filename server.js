@@ -40,16 +40,22 @@ app.post('/api/logout', auth.logout);
 app.use('/api', auth.requireAuth);
 
 app.get('/api/config', (req, res) => {
-  res.json({ institution: INSTITUTION_NAME, authEnabled: auth.enabled });
+  res.json({ institution: INSTITUTION_NAME, authEnabled: auth.enabled, currentMonth: nowInTimezone().month });
 });
 
 // ═══════════════════════════════════════════════════════
 //  STUDENT ROUTES
 // ═══════════════════════════════════════════════════════
 
+// Each student includes `paid` / `paid_date` for the current month
 app.get('/api/students', async (req, res) => {
   try {
-    res.json(await db.getAllStudents());
+    const { month } = nowInTimezone();
+    const [students, payments] = await Promise.all([db.getAllStudents(), db.getPaymentsForMonth(month)]);
+    res.json(students.map(s => {
+      const payment = payments.get(s.id);
+      return { ...s, paid: payment?.status === 'paid', paid_date: payment?.status === 'paid' ? payment.paid_date : null };
+    }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -70,6 +76,18 @@ app.put('/api/students/:id', async (req, res) => {
     const { student, error } = validateStudent(req.body);
     if (error) return res.status(400).json({ error });
     res.json(await db.updateStudent(parseId(req.params.id), student));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Mark a student paid / not paid for the current month
+app.put('/api/students/:id/payment', async (req, res) => {
+  try {
+    if (typeof req.body.paid !== 'boolean') return res.status(400).json({ error: '"paid" must be true or false' });
+    const { month } = nowInTimezone();
+    const record = await db.setPaymentStatus(parseId(req.params.id), month, req.body.paid);
+    res.json({ month, paid: record.status === 'paid', paid_date: record.paid_date });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -159,10 +177,12 @@ async function runMonthlyReminders(trigger) {
       return;
     }
 
-    const students = await db.getAllStudents();
+    // Skip anyone already marked paid for this month (e.g. paid in advance)
+    const [allStudents, payments] = await Promise.all([db.getAllStudents(), db.getPaymentsForMonth(month)]);
+    const students = allStudents.filter(s => payments.get(s.id)?.status !== 'paid');
     if (students.length === 0) return;
 
-    console.log(`\n🗓️  Sending ${month} reminders to ${students.length} students (${trigger})`);
+    console.log(`\n🗓️  Sending ${month} reminders to ${students.length} unpaid students (${trigger})`);
     const results = await whatsapp.sendFeeReminders(students, month, INSTITUTION_NAME);
     lastSentMonth = month;
     await db.logReminderRun(month, results.sent, results.failed);
