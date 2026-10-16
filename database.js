@@ -118,32 +118,60 @@ async function setPaymentStatus(studentId, month, paid) {
   return data;
 }
 
-// ─── Monthly Reminder Log ──────────────────────────────
-// Each month's reminder run is recorded in activity_log as
-// "Monthly Reminders" with details "Month: YYYY-MM | Sent: n, Failed: n".
+// ─── Reminder Log ──────────────────────────────────────
+// Every reminder run is recorded in activity_log:
+//   "Monthly Reminders"  details "Month: YYYY-MM | Day: 1,10 | Sent: n, Failed: n"  (scheduled)
+//   "Manual Reminders"   details "Month: YYYY-MM | Sent: n, Failed: n"             (Send now)
+// Older scheduled entries have no "Day:" part and count as day 1.
 
+const MANUAL_REMINDER_ACTION = 'Manual Reminders';
+
+function parseReminderRun(row) {
+  const details = row.details || '';
+  const month = /Month: (\d{4}-\d{2})/.exec(details)?.[1] || null;
+  const dayList = /Day: ([\d,]+)/.exec(details)?.[1];
+  const counts = /Sent: (\d+), Failed: (\d+)/.exec(details);
+  const manual = row.action === MANUAL_REMINDER_ACTION;
+  return {
+    month,
+    days: manual ? [] : (dayList ? dayList.split(',').map(Number) : [1]),
+    manual,
+    sent: Number(counts?.[1] || 0),
+    failed: Number(counts?.[2] || 0),
+    at: row.created_at
+  };
+}
+
+/** Most recent reminder run, scheduled or manual */
 async function getLastReminderRun() {
   const { data, error } = await supabase
     .from('activity_log')
-    .select('*')
-    .eq('action', REMINDER_ACTION)
+    .select('action, details, created_at')
+    .in('action', [REMINDER_ACTION, MANUAL_REMINDER_ACTION])
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
   if (error) throw error;
-  if (!data) return null;
-
-  const match = /Month: (\d{4}-\d{2}) \| Sent: (\d+), Failed: (\d+)/.exec(data.details || '');
-  return {
-    month: match?.[1] || null,
-    sent: Number(match?.[2] || 0),
-    failed: Number(match?.[3] || 0),
-    at: data.created_at
-  };
+  return data ? parseReminderRun(data) : null;
 }
 
-async function logReminderRun(month, sent, failed) {
-  await logActivity(REMINDER_ACTION, `Month: ${month} | Sent: ${sent}, Failed: ${failed}`);
+/** Days of `month` whose scheduled reminder has already been sent */
+async function getScheduledDaysSent(month) {
+  const { data, error } = await supabase
+    .from('activity_log')
+    .select('action, details, created_at')
+    .eq('action', REMINDER_ACTION)
+    .like('details', `Month: ${month} |%`);
+  if (error) throw error;
+  return new Set(data.flatMap(row => parseReminderRun(row).days));
+}
+
+async function logReminderRun(month, days, sent, failed) {
+  await logActivity(REMINDER_ACTION, `Month: ${month} | Day: ${days.join(',')} | Sent: ${sent}, Failed: ${failed}`);
+}
+
+async function logManualReminderRun(month, sent, failed) {
+  await logActivity(MANUAL_REMINDER_ACTION, `Month: ${month} | Sent: ${sent}, Failed: ${failed}`);
 }
 
 // ─── Activity Log ──────────────────────────────────────
@@ -166,6 +194,8 @@ module.exports = {
   getPaymentsForMonth,
   setPaymentStatus,
   getLastReminderRun,
+  getScheduledDaysSent,
   logReminderRun,
+  logManualReminderRun,
   logActivity
 };

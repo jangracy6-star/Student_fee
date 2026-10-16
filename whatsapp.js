@@ -167,13 +167,18 @@ function formatMonth(month) {
   return `${MONTH_NAMES[parseInt(monthNum) - 1] || monthNum} ${year}`;
 }
 
-function buildReminderMessage(student, month, institutionName) {
-  return `🎓 *Fee Reminder — ${institutionName}*\n\n` +
-    `Dear *${student.name}*,\n\n` +
-    `This is a gentle reminder that your fee of *₹${Number(student.fee_amount).toLocaleString('en-IN')}* ` +
-    `for the month of *${formatMonth(month)}* is due.\n\n` +
-    `Please make the payment at your earliest convenience.\n\n` +
-    `Thank you!\n— ${institutionName}`;
+/**
+ * Fill a message template for one student.
+ * Placeholders: {name}, {fee}, {month}, {institution}
+ */
+function buildReminderMessage(student, month, institutionName, template) {
+  const values = {
+    name: student.name,
+    fee: `₹${Number(student.fee_amount).toLocaleString('en-IN')}`,
+    month: formatMonth(month),
+    institution: institutionName
+  };
+  return template.replace(/\{(name|fee|month|institution)\}/gi, (_, key) => values[key.toLowerCase()]);
 }
 
 /**
@@ -205,13 +210,14 @@ async function sendMessage(phone, message) {
 }
 
 /**
- * Send the monthly fee reminder to every student
+ * Send the fee reminder to each student
  * @param {Array} students - Student rows (name, phone, fee_amount)
  * @param {string} month - 'YYYY-MM'
  * @param {string} institutionName - Name of the institution
+ * @param {string} template - Message template (see buildReminderMessage)
  * @returns {object} - Summary of sent/failed
  */
-async function sendFeeReminders(students, month, institutionName) {
+async function sendFeeReminders(students, month, institutionName, template) {
   const results = { sent: 0, failed: 0, errors: [] };
 
   for (const [i, student] of students.entries()) {
@@ -221,7 +227,7 @@ async function sendFeeReminders(students, month, institutionName) {
       continue;
     }
 
-    const message = buildReminderMessage(student, month, institutionName);
+    const message = buildReminderMessage(student, month, institutionName, template);
 
     try {
       const result = await sendMessage(student.phone, message);

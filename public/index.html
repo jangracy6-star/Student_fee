@@ -34,6 +34,9 @@
       <symbol id="i-x" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></symbol>
       <symbol id="i-trash" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
       <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
+      <symbol id="i-back" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></symbol>
       <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
       <symbol id="i-whatsapp" viewBox="0 0 24 24"><path fill="currentColor" stroke="none" d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path fill="currentColor" stroke="none" d="M12 0C5.373 0 0 5.373 0 12c0 2.625.846 5.059 2.284 7.034L.789 23.492a.5.5 0 0 0 .611.611l4.458-1.495A11.943 11.943 0 0 0 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 22c-2.357 0-4.542-.808-6.273-2.163l-.438-.35-3.172 1.063 1.063-3.172-.35-.438A9.955 9.955 0 0 1 2 12C2 6.486 6.486 2 12 2s10 4.486 10 10-4.486 10-10 10z"/></symbol>
     </defs>
@@ -62,9 +65,14 @@
       <span class="brand-mark"><svg class="i"><use href="#i-cap"/></svg></span>
       <span class="brand-name" id="institution-name">Student Fees</span>
     </div>
-    <button class="btn btn-icon btn-ghost" id="btn-logout" data-action="logout" title="Log out" aria-label="Log out" hidden>
-      <svg class="i"><use href="#i-logout"/></svg>
-    </button>
+    <div class="topbar-actions">
+      <button class="btn btn-icon btn-ghost" data-action="open-settings" title="Settings" aria-label="Settings">
+        <svg class="i"><use href="#i-settings"/></svg>
+      </button>
+      <button class="btn btn-icon btn-ghost" id="btn-logout" data-action="logout" title="Log out" aria-label="Log out" hidden>
+        <svg class="i"><use href="#i-logout"/></svg>
+      </button>
+    </div>
   </header>
 
   <main class="page">
@@ -166,6 +174,75 @@
           <button type="submit" class="btn btn-primary" id="btn-save-student">Save</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- ═══════ SETTINGS ═══════ -->
+  <div class="sheet-overlay screen-overlay" id="settings-screen" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <div class="sheet screen">
+      <header class="screen-header">
+        <button class="btn btn-icon btn-ghost" data-action="close-settings" aria-label="Back">
+          <svg class="i"><use href="#i-back"/></svg>
+        </button>
+        <h2 id="settings-title">Settings</h2>
+        <span class="screen-header-spacer"></span>
+      </header>
+
+      <div class="screen-body">
+        <section class="group">
+          <h3 class="group-title">WhatsApp</h3>
+          <div class="card card-row">
+            <span class="wa-state">
+              <span class="dot" id="set-wa-dot"></span>
+              <span id="set-wa-text">Checking…</span>
+            </span>
+            <button class="btn btn-sm btn-secondary" data-action="open-qr" id="set-wa-btn">Manage</button>
+          </div>
+        </section>
+
+        <section class="group">
+          <h3 class="group-title">Automatic reminders</h3>
+          <div class="card">
+            <label class="switch-row">
+              <span class="switch-text">
+                <span>Send automatically</span>
+                <small>Only students who haven't paid that month</small>
+              </span>
+              <input type="checkbox" class="switch" id="set-auto" />
+            </label>
+            <div class="days-block" id="days-block">
+              <span class="field-label">Send on these days of the month</span>
+              <div class="day-grid" id="day-grid" role="group" aria-label="Reminder days"></div>
+              <p class="field-hint" id="days-summary"></p>
+            </div>
+          </div>
+        </section>
+
+        <section class="group">
+          <div class="group-head">
+            <h3 class="group-title">Message</h3>
+            <button class="link-btn" data-action="reset-message">Reset to default</button>
+          </div>
+          <div class="card">
+            <div class="chips" aria-label="Insert a detail">
+              <span class="chips-label">Insert</span>
+              <button class="chip" data-action="insert-tag" data-tag="{name}">Name</button>
+              <button class="chip" data-action="insert-tag" data-tag="{fee}">Fee</button>
+              <button class="chip" data-action="insert-tag" data-tag="{month}">Month</button>
+              <button class="chip" data-action="insert-tag" data-tag="{institution}">Institute</button>
+            </div>
+            <textarea id="set-message" rows="8" maxlength="1500" spellcheck="true" aria-label="Reminder message"></textarea>
+            <p class="field-hint">{name}, {fee} and {month} are filled in for each student. Wrap text in *stars* for bold.</p>
+            <span class="field-label preview-label">Preview</span>
+            <div class="bubble" id="message-preview"></div>
+          </div>
+        </section>
+      </div>
+
+      <footer class="screen-footer">
+        <p class="form-error" id="settings-error" hidden></p>
+        <button class="btn btn-primary btn-block" id="btn-save-settings" data-action="save-settings" disabled>Save changes</button>
+      </footer>
     </div>
   </div>
 

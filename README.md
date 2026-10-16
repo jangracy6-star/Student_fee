@@ -5,7 +5,9 @@ A clean, minimal, mobile-first app (light & dark mode): **add your students, and
 - Add, edit, or delete students (name, WhatsApp number, class, monthly fee).
 - Mark each student **Paid / Not paid** for the current month with one tap, and filter the list by All / Not paid / Paid. Everyone starts the month as *Not paid*.
 - Link WhatsApp once by scanning a QR code.
-- On the **1st of every month**, every student not already marked paid receives a reminder like:
+- **Send now** reminds every unpaid student immediately.
+- **Settings** (gear icon): choose which days of the month reminders go out automatically (e.g. the 1st and 10th), turn automatic sending off, and edit the message. `{name}`, `{fee}`, `{month}` and `{institution}` are filled in for each student, with a live preview.
+- On each chosen day (the 1st by default), every student not marked paid receives a reminder like:
 
   > 🎓 *Fee Reminder — Student Academy*
   > Dear *Ravi Kumar*, this is a gentle reminder that your fee of *₹3,000* for the month of *November 2026* is due…
@@ -64,19 +66,21 @@ Notes for the free plan:
 
 ## How it works
 
-- Reminders are sent on the **1st of every month** (in `TIMEZONE`, default India time) to every student, except anyone already marked paid for that month (e.g. paid in advance).
+- Scheduled reminders go out on the days chosen in Settings (in `TIMEZONE`, default India time) to every student not marked paid for that month. Days past the end of a short month move to its last day.
+- If the server was asleep or WhatsApp was disconnected on a reminder day, that day's reminders go out as soon as it's back, within 2 days. Each day is only ever sent once.
+- Settings are stored as `settings.json` in a private Supabase Storage bucket (`app-settings`), so no database changes are needed.
 - Paid / not paid is stored per student per month in the `fee_records` table.
-- If the server was asleep or WhatsApp was disconnected on the 1st, the reminders go out as soon as it's back, up to the **3rd** of the month. They are never sent twice in the same month.
 - 10-digit phone numbers are treated as Indian (`+91` is added).
 - If WhatsApp disconnects, the server reconnects on its own. If the session has expired, open the app and scan the new QR code.
 
 ## Project structure
 
 ```
-server.js       Express API, auth, monthly reminder schedule
+server.js       Express API, auth, reminder schedule and Send now
 database.js     Supabase queries
 whatsapp.js     WhatsApp client, reconnects, reminder messages
 session-store.js  Saves the WhatsApp login to Supabase Storage
+settings.js     Reminder days and message template (Supabase Storage)
 auth.js         Optional password login (signed HttpOnly cookie)
 public/         Frontend (HTML/CSS/JS, PWA manifest and service worker)
 ```

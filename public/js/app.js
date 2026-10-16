@@ -13,7 +13,9 @@ const state = {
   filter: 'all', // 'all' | 'paid' | 'unpaid'
   studentsLoaded: false,
   wa: { status: null },
-  reminders: null
+  reminders: null,
+  settings: null,       // saved settings from the server
+  draft: null           // settings being edited on the Settings page
 };
 
 let waPollTimer = null;
@@ -154,6 +156,7 @@ function renderStudents() {
   $('stat-paid').textContent = `${paidCount}/${total}`;
   $('stat-progress').style.width = total ? `${(paidCount / total) * 100}%` : '0';
   $('stat-progressbar').setAttribute('aria-valuenow', total ? Math.round((paidCount / total) * 100) : 0);
+  renderReminderCard(); // "Send now" depends on how many are unpaid
   $('toolbar').hidden = total === 0;
   $('search-bar').hidden = total < 6;
   $('count-all').textContent = total;
@@ -353,10 +356,16 @@ async function updateWhatsAppStatus(force = false) {
 async function loadReminderInfo() {
   clearTimeout(reminderPollTimer);
   try {
+    const wasRunning = state.reminders?.running;
     state.reminders = await api('/api/reminders');
     renderReminderCard();
     // While a send is in progress, check back until it finishes
-    if (state.reminders.running) reminderPollTimer = setTimeout(loadReminderInfo, 10000);
+    if (state.reminders.running) {
+      reminderPollTimer = setTimeout(loadReminderInfo, 3000);
+    } else if (wasRunning && state.reminders.lastRun) {
+      const r = state.reminders.lastRun;
+      showToast(`Reminder sent to ${r.sent} student${r.sent === 1 ? '' : 's'}${r.failed ? ` · ${r.failed} failed` : ''}`, r.failed ? 'warning' : 'success');
+    }
   } catch (err) {
     // keep the last known info
   }
@@ -366,46 +375,234 @@ function renderReminderCard() {
   const card = $('reminder-card');
   const status = state.wa.status;
   const info = state.reminders;
-  const count = state.students.length;
   const btn = $('btn-connect');
-
-  card.classList.remove('is-on', 'is-off');
   const title = $('reminder-title');
   const text = $('reminder-text');
+  const unpaid = state.students.filter(s => !s.paid).length;
+
+  card.classList.remove('is-on', 'is-off');
 
   if (status === 'connected') {
     card.classList.add('is-on');
-    title.textContent = 'Reminders on';
     if (info?.running) {
-      text.textContent = 'Sending this month\'s reminders…';
+      title.textContent = 'Sending…';
+      text.textContent = `To ${unpaid} unpaid student${unpaid === 1 ? '' : 's'}`;
+    } else if (info && !info.autoEnabled) {
+      title.textContent = 'Automatic reminders off';
+      text.textContent = 'Turn them on in Settings, or send now';
     } else {
-      text.textContent = info
-        ? `Next on ${formatDate(info.nextDate, true)} · ${count} student${count === 1 ? '' : 's'}`
-        : 'Sent on the 1st of every month';
+      title.textContent = 'Reminders on';
+      text.textContent = info?.nextDate ? `Next on ${formatNextDate(info.nextDate)}` : 'Sent automatically each month';
     }
-    btn.textContent = 'Manage';
-    btn.className = 'btn btn-sm btn-secondary';
+    setButton(btn, '<svg class="i"><use href="#i-send"/></svg>Send now', 'btn btn-sm btn-primary', 'send-now');
+    btn.disabled = !!info?.running || (state.studentsLoaded && unpaid === 0);
+    btn.title = unpaid === 0 ? 'Everyone has paid this month' : `Remind ${unpaid} unpaid student${unpaid === 1 ? '' : 's'} now`;
   } else if (status === 'connecting') {
     title.textContent = 'Connecting WhatsApp…';
     text.textContent = 'This can take up to a minute';
-    btn.textContent = 'View';
-    btn.className = 'btn btn-sm btn-secondary';
+    setButton(btn, 'View', 'btn btn-sm btn-secondary', 'open-qr');
+    btn.disabled = false;
   } else if (status) {
     card.classList.add('is-off');
     title.textContent = 'Reminders paused';
-    text.textContent = 'Connect WhatsApp to send them on the 1st';
-    btn.textContent = 'Connect';
-    btn.className = 'btn btn-sm btn-primary';
+    text.textContent = 'Connect WhatsApp to send them';
+    setButton(btn, 'Connect', 'btn btn-sm btn-primary', 'open-qr');
+    btn.disabled = false;
   }
 
   const last = $('reminder-last');
-  if (info?.lastRun) {
+  if (info?.lastRun && !info.running) {
     const r = info.lastRun;
     last.textContent = `Last sent ${formatDate(r.at, true)} · ${r.sent} delivered${r.failed ? `, ${r.failed} failed` : ''}`;
     last.hidden = false;
   } else {
     last.hidden = true;
   }
+
+  renderSettingsWhatsApp();
+}
+
+/** Update a button only when something changed, so a tap mid-refresh isn't lost */
+function setButton(btn, html, className, action) {
+  if (btn.dataset.html !== html) {
+    btn.innerHTML = html;
+    btn.dataset.html = html;
+  }
+  if (btn.className !== className) btn.className = className;
+  btn.dataset.action = action;
+}
+
+/** "Today", "Tomorrow" or "20 Oct" */
+function formatNextDate(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const target = new Date(y, m - 1, d);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diff = Math.round((target - today) / 86400000);
+  if (diff <= 0) return 'today';
+  if (diff === 1) return 'tomorrow';
+  return formatDate(dateStr, true);
+}
+
+/** Send this month's reminder to everyone who hasn't paid, after confirming */
+async function sendNow() {
+  const unpaid = state.students.filter(s => !s.paid);
+  if (unpaid.length === 0) return showToast('Everyone has paid this month', 'success');
+
+  const names = unpaid.slice(0, 3).map(s => s.name).join(', ') + (unpaid.length > 3 ? ` and ${unpaid.length - 3} more` : '');
+  const ok = await confirmDialog({
+    title: `Send to ${unpaid.length} unpaid student${unpaid.length === 1 ? '' : 's'}?`,
+    message: `${names} will get the reminder on WhatsApp now.`,
+    confirmLabel: 'Send now'
+  });
+  if (!ok) return;
+
+  try {
+    const result = await api('/api/reminders/send-now', { method: 'POST' });
+    if (!result.count) return showToast(result.message || 'Everyone has paid this month', 'success');
+    showToast(`Sending to ${result.count} student${result.count === 1 ? '' : 's'}…`, 'info');
+    state.reminders = { ...(state.reminders || {}), running: true };
+    renderReminderCard();
+    reminderPollTimer = setTimeout(loadReminderInfo, 2000);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+//  SETTINGS PAGE
+// ═══════════════════════════════════════════════════════
+
+async function openSettings() {
+  try {
+    state.settings = await api('/api/settings');
+  } catch (err) {
+    return showToast(err.message || 'Could not load settings', 'error');
+  }
+  state.draft = {
+    autoEnabled: state.settings.autoEnabled,
+    reminderDays: [...state.settings.reminderDays],
+    messageTemplate: state.settings.messageTemplate
+  };
+  $('set-auto').checked = state.draft.autoEnabled;
+  $('set-message').value = state.draft.messageTemplate;
+  $('settings-error').hidden = true;
+  renderDayGrid();
+  renderSettingsState();
+  renderSettingsWhatsApp();
+  openSheet('settings-screen');
+}
+
+function renderDayGrid() {
+  $('day-grid').innerHTML = Array.from({ length: 31 }, (_, i) => {
+    const day = i + 1;
+    const selected = state.draft.reminderDays.includes(day);
+    return `<button class="day ${selected ? 'selected' : ''}" data-action="toggle-day" data-day="${day}" aria-pressed="${selected}">${day}</button>`;
+  }).join('');
+}
+
+function renderSettingsState() {
+  const draft = state.draft;
+  const days = draft.reminderDays;
+
+  $('days-block').classList.toggle('disabled', !draft.autoEnabled);
+  $('days-summary').textContent = days.length
+    ? `Every month on the ${joinWords(days.map(ordinal))}${days.some(d => d > 28) ? '. In shorter months, days past the end move to the last day.' : ''}`
+    : 'Pick at least one day';
+
+  renderMessagePreview();
+
+  const saved = state.settings;
+  const dirty = draft.autoEnabled !== saved.autoEnabled ||
+    draft.messageTemplate.trim() !== saved.messageTemplate ||
+    draft.reminderDays.join() !== saved.reminderDays.join();
+  $('btn-save-settings').disabled = !dirty || (draft.autoEnabled && days.length === 0) || !draft.messageTemplate.trim();
+}
+
+function renderMessagePreview() {
+  const sample = state.students.find(s => !s.paid) || state.students[0] || { name: 'Ravi Kumar', fee_amount: 3000 };
+  const values = {
+    name: sample.name,
+    fee: formatMoney(sample.fee_amount),
+    month: state.config.currentMonth ? formatMonth(state.config.currentMonth) : 'this month',
+    institution: state.settings?.institution || state.config.institution
+  };
+  const filled = state.draft.messageTemplate.replace(/\{(name|fee|month|institution)\}/gi, (_, key) => values[key.toLowerCase()]);
+  // Show WhatsApp-style formatting: *bold* and _italic_
+  $('message-preview').innerHTML = escapeHtml(filled)
+    .replace(/\*([^*\n]+)\*/g, '<strong>$1</strong>')
+    .replace(/(^|\s)_([^_\n]+)_/g, '$1<em>$2</em>') || '<span class="text-muted">Your message will appear here</span>';
+}
+
+function renderSettingsWhatsApp() {
+  const status = state.wa.status;
+  const dot = $('set-wa-dot');
+  if (!dot) return;
+  dot.className = `dot ${status === 'connected' ? 'on' : status ? 'off' : ''}`;
+  $('set-wa-text').textContent = status === 'connected' ? 'Connected'
+    : status === 'connecting' ? 'Connecting…' : status ? 'Not connected' : 'Checking…';
+  $('set-wa-btn').textContent = status === 'connected' ? 'Manage' : 'Connect';
+}
+
+function toggleDay(day) {
+  const days = state.draft.reminderDays;
+  state.draft.reminderDays = days.includes(day) ? days.filter(d => d !== day) : [...days, day].sort((a, b) => a - b);
+  renderDayGrid();
+  renderSettingsState();
+}
+
+function insertTag(tag) {
+  const area = $('set-message');
+  const start = area.selectionStart ?? area.value.length;
+  const end = area.selectionEnd ?? area.value.length;
+  area.setRangeText(tag, start, end, 'end');
+  area.focus();
+  state.draft.messageTemplate = area.value;
+  renderSettingsState();
+}
+
+function resetMessage() {
+  $('set-message').value = state.settings.defaultTemplate;
+  state.draft.messageTemplate = state.settings.defaultTemplate;
+  renderSettingsState();
+}
+
+async function saveSettings() {
+  const btn = $('btn-save-settings');
+  const errorEl = $('settings-error');
+  errorEl.hidden = true;
+  setLoading(btn, true);
+  try {
+    const saved = await api('/api/settings', { method: 'PUT', body: state.draft });
+    state.settings = { ...state.settings, ...saved };
+    state.draft = { ...saved, reminderDays: [...saved.reminderDays] };
+    $('set-message').value = saved.messageTemplate;
+    showToast('Settings saved', 'success');
+    loadReminderInfo();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.hidden = false;
+  } finally {
+    setLoading(btn, false);
+    renderSettingsState();
+  }
+}
+
+async function closeSettings() {
+  if (!$('btn-save-settings').disabled) {
+    const discard = await confirmDialog({ title: 'Discard changes?', message: 'Your changes to the settings haven\'t been saved.', confirmLabel: 'Discard', danger: true });
+    if (!discard) return;
+  }
+  closeSheet();
+}
+
+function ordinal(n) {
+  const suffix = (n % 100 >= 11 && n % 100 <= 13) ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th');
+  return `${n}${suffix}`;
+}
+
+function joinWords(items) {
+  return items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
 }
 
 // ─── QR Sheet ──────────────────────────────────────────
@@ -580,6 +777,14 @@ function bindEvents() {
   $('btn-confirm-ok').addEventListener('click', () => answerConfirm(true));
   $('btn-confirm-cancel').addEventListener('click', () => answerConfirm(false));
   $('student-search').addEventListener('input', renderStudents);
+  $('set-message').addEventListener('input', (e) => {
+    state.draft.messageTemplate = e.target.value;
+    renderSettingsState();
+  });
+  $('set-auto').addEventListener('change', (e) => {
+    state.draft.autoEnabled = e.target.checked;
+    renderSettingsState();
+  });
   document.querySelectorAll('#pay-filter .segment').forEach(b => b.addEventListener('click', () => {
     state.filter = b.dataset.filter;
     renderStudents();
@@ -596,7 +801,9 @@ function bindEvents() {
 
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || !sheetStack.length) return;
-    if (sheetStack[sheetStack.length - 1] === 'confirm-sheet') answerConfirm(false);
+    const top = sheetStack[sheetStack.length - 1];
+    if (top === 'confirm-sheet') answerConfirm(false);
+    else if (top === 'settings-screen') closeSettings();
     else closeSheet();
   });
 
@@ -623,6 +830,13 @@ function bindEvents() {
       case 'toggle-paid': togglePaid(Number(el.dataset.id)); break;
       case 'close-sheet': closeSheet(); break;
       case 'open-qr': openQRSheet(); break;
+      case 'send-now': sendNow(); break;
+      case 'open-settings': openSettings(); break;
+      case 'close-settings': closeSettings(); break;
+      case 'toggle-day': toggleDay(Number(el.dataset.day)); break;
+      case 'insert-tag': insertTag(el.dataset.tag); break;
+      case 'reset-message': resetMessage(); break;
+      case 'save-settings': saveSettings(); break;
       case 'wa-logout': whatsappLogout(); break;
       case 'logout': logout(); break;
       case 'reload': loadStudents(); break;
@@ -642,7 +856,7 @@ function registerServiceWorker() {
 
 function showToast(message, type = 'info', { actionLabel, onAction } = {}) {
   const container = $('toast-container');
-  const icons = { success: 'check-circle', error: 'alert', warning: 'alert', info: 'alert' };
+  const icons = { success: 'check-circle', error: 'alert', warning: 'alert', info: 'send' };
 
   const toast = document.createElement('div');
   toast.className = `toast ${type}${actionLabel ? ' has-action' : ''}`;

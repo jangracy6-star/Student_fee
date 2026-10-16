@@ -1,6 +1,6 @@
 /**
  * Student Fee Management System — Express Server
- * Students API, WhatsApp connection, and the automatic monthly reminder
+ * Students API, WhatsApp connection, settings, and scheduled reminders
  */
 require('dotenv').config();
 const express = require('express');
@@ -11,14 +11,15 @@ const path = require('path');
 const db = require('./database');
 const whatsapp = require('./whatsapp');
 const auth = require('./auth');
+const settingsStore = require('./settings');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const INSTITUTION_NAME = process.env.INSTITUTION_NAME || 'Student Academy';
 const TIMEZONE = process.env.TIMEZONE || 'Asia/Kolkata';
 
-// If the server was asleep or WhatsApp was offline on the 1st,
-// reminders still go out as soon as possible during the first few days.
+// If the server was asleep or WhatsApp was offline on a reminder day,
+// that day's reminders still go out during the next couple of days.
 const CATCH_UP_DAYS = 3;
 
 // ─── Middleware ─────────────────────────────────────────
@@ -132,18 +133,59 @@ app.post('/api/whatsapp/logout', async (req, res) => {
   }
 });
 
-// When the last monthly reminder went out and when the next one will
+// When the last reminder went out and when the next scheduled one will
 app.get('/api/reminders', async (req, res) => {
   try {
     const { month, day } = nowInTimezone();
-    const last = await db.getLastReminderRun();
-    const sentThisMonth = last?.month === month || lastSentMonth === month;
-    const nextMonth = (sentThisMonth || day > CATCH_UP_DAYS) ? shiftMonth(month, 1) : month;
+    const settings = await settingsStore.getSettings();
+    const [last, sentDays] = await Promise.all([db.getLastReminderRun(), db.getScheduledDaysSent(month)]);
     res.json({
       lastRun: last,
-      nextDate: `${nextMonth}-01`,
+      nextDate: settings.autoEnabled ? nextReminderDate(settings.reminderDays, month, day, sentDays) : null,
+      autoEnabled: settings.autoEnabled,
       running: reminderRunning
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Send this month's reminder to every unpaid student right now (runs in the background)
+app.post('/api/reminders/send-now', async (req, res) => {
+  try {
+    if (reminderRunning) return res.status(409).json({ error: 'Reminders are already being sent' });
+    if (whatsapp.getStatus().status !== 'connected') {
+      return res.status(400).json({ error: 'Connect WhatsApp first' });
+    }
+    const { month } = nowInTimezone();
+    const students = await getUnpaidStudents(month);
+    if (students.length === 0) return res.json({ count: 0, message: 'Everyone has paid this month' });
+
+    sendReminders(students, month, 'send now', (results) => db.logManualReminderRun(month, results.sent, results.failed));
+    res.status(202).json({ count: students.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════
+//  SETTINGS
+// ═══════════════════════════════════════════════════════
+
+app.get('/api/settings', async (req, res) => {
+  try {
+    res.json({ ...(await settingsStore.getSettings()), defaultTemplate: settingsStore.DEFAULT_TEMPLATE, institution: INSTITUTION_NAME });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/settings', async (req, res) => {
+  try {
+    const { settings, error } = await settingsStore.saveSettings(req.body);
+    if (error) return res.status(400).json({ error });
+    await db.logActivity('Settings Updated', `Reminder days: ${settings.reminderDays.join(', ') || 'none'} | Automatic: ${settings.autoEnabled ? 'on' : 'off'}`);
+    res.json(settings);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -154,48 +196,70 @@ app.use('/api', (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════
-//  MONTHLY REMINDERS
+//  REMINDERS
 // ═══════════════════════════════════════════════════════
 
 let reminderRunning = false;
-let lastSentMonth = null; // in-memory guard so a failed log write can never cause a resend
+const sentKeys = new Set(); // 'YYYY-MM:day' — in-memory guard so a failed log write can never cause a resend
 
-async function runMonthlyReminders(trigger) {
-  if (reminderRunning) return;
-  const { month, day } = nowInTimezone();
-  if (day > CATCH_UP_DAYS || lastSentMonth === month) return;
-  if (whatsapp.getStatus().status !== 'connected') {
-    console.log(`⏳ Reminders for ${month} waiting for WhatsApp to connect (${trigger})`);
-    return;
-  }
+/** Students not marked paid for `month` */
+async function getUnpaidStudents(month) {
+  const [allStudents, payments] = await Promise.all([db.getAllStudents(), db.getPaymentsForMonth(month)]);
+  return allStudents.filter(s => payments.get(s.id)?.status !== 'paid');
+}
 
+/** Send the reminder to `students` using the saved message, then call `onDone(results)` */
+async function sendReminders(students, month, trigger, onDone) {
   reminderRunning = true;
   try {
-    const last = await db.getLastReminderRun();
-    if (last?.month === month) {
-      lastSentMonth = month;
-      return;
-    }
-
-    // Skip anyone already marked paid for this month (e.g. paid in advance)
-    const [allStudents, payments] = await Promise.all([db.getAllStudents(), db.getPaymentsForMonth(month)]);
-    const students = allStudents.filter(s => payments.get(s.id)?.status !== 'paid');
-    if (students.length === 0) return;
-
+    const { messageTemplate } = await settingsStore.getSettings();
     console.log(`\n🗓️  Sending ${month} reminders to ${students.length} unpaid students (${trigger})`);
-    const results = await whatsapp.sendFeeReminders(students, month, INSTITUTION_NAME);
-    lastSentMonth = month;
-    await db.logReminderRun(month, results.sent, results.failed);
+    const results = await whatsapp.sendFeeReminders(students, month, INSTITUTION_NAME, messageTemplate);
+    await onDone(results);
     console.log(`   📱 Sent: ${results.sent}, failed: ${results.failed}`);
+    return results;
   } catch (err) {
-    console.error('   ❌ Monthly reminder error:', err.message);
+    console.error('   ❌ Reminder error:', err.message);
   } finally {
     reminderRunning = false;
   }
 }
 
-// Every hour on days 1–3 of the month; runMonthlyReminders makes sure it only sends once
-cron.schedule(`1 * 1-${CATCH_UP_DAYS} * *`, () => runMonthlyReminders('schedule'), { timezone: TIMEZONE });
+/** Send any scheduled reminders that are due today (or were missed in the last few days) */
+async function runScheduledReminders(trigger) {
+  if (reminderRunning) return;
+  const settings = await settingsStore.getSettings();
+  if (!settings.autoEnabled) return;
+
+  const { month, day } = nowInTimezone();
+  const due = dueDays(settings.reminderDays, month, day).filter(d => !sentKeys.has(`${month}:${d}`));
+  if (due.length === 0) return;
+
+  if (whatsapp.getStatus().status !== 'connected') {
+    console.log(`⏳ Reminders for ${month} (day ${due.join(', ')}) waiting for WhatsApp to connect (${trigger})`);
+    return;
+  }
+
+  try {
+    const sentDays = await db.getScheduledDaysSent(month);
+    const remaining = due.filter(d => !sentDays.has(d));
+    due.filter(d => sentDays.has(d)).forEach(d => sentKeys.add(`${month}:${d}`));
+    if (remaining.length === 0) return;
+
+    const students = await getUnpaidStudents(month);
+    remaining.forEach(d => sentKeys.add(`${month}:${d}`));
+    if (students.length === 0) {
+      await db.logReminderRun(month, remaining, 0, 0);
+      return;
+    }
+    await sendReminders(students, month, trigger, (results) => db.logReminderRun(month, remaining, results.sent, results.failed));
+  } catch (err) {
+    console.error('   ❌ Scheduled reminder error:', err.message);
+  }
+}
+
+// Check every hour; runScheduledReminders makes sure each chosen day only sends once
+cron.schedule('1 * * * *', () => runScheduledReminders('schedule'), { timezone: TIMEZONE });
 
 // ─── Helpers ───────────────────────────────────────────
 function nowInTimezone() {
@@ -203,6 +267,33 @@ function nowInTimezone() {
   const date = new Intl.DateTimeFormat('en-CA', { timeZone: TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit' })
     .format(new Date());
   return { month: date.slice(0, 7), day: Number(date.slice(8, 10)) };
+}
+
+function daysInMonth(month) {
+  const [year, mon] = month.split('-').map(Number);
+  return new Date(Date.UTC(year, mon, 0)).getUTCDate();
+}
+
+/** Chosen days for `month`; days past the month's end move to its last day (e.g. 31 → 30 in April) */
+function reminderDaysFor(reminderDays, month) {
+  const last = daysInMonth(month);
+  return [...new Set(reminderDays.map(d => Math.min(d, last)))].sort((a, b) => a - b);
+}
+
+/** Chosen days that are due today, including ones missed within the catch-up window */
+function dueDays(reminderDays, month, today) {
+  return reminderDaysFor(reminderDays, month).filter(d => today >= d && today < d + CATCH_UP_DAYS);
+}
+
+/** 'YYYY-MM-DD' of the next scheduled reminder that hasn't been sent yet */
+function nextReminderDate(reminderDays, month, today, sentDays) {
+  if (reminderDays.length === 0) return null;
+  const pad = (d) => String(d).padStart(2, '0');
+  const pending = reminderDaysFor(reminderDays, month)
+    .filter(d => !sentDays.has(d) && today < d + CATCH_UP_DAYS);
+  if (pending.length) return `${month}-${pad(Math.max(pending[0], today))}`;
+  const next = shiftMonth(month, 1);
+  return `${next}-${pad(reminderDaysFor(reminderDays, next)[0])}`;
 }
 
 function shiftMonth(month, delta) {
@@ -264,7 +355,7 @@ app.listen(PORT, () => {
   }
   console.log('');
 
-  // Initialize WhatsApp; whenever it connects, send this month's reminders if they're still due
+  // Initialize WhatsApp; whenever it connects, send any reminders that are still due
   console.log('📱 Initializing WhatsApp...');
-  whatsapp.initWhatsApp(() => runMonthlyReminders('whatsapp connected'));
+  whatsapp.initWhatsApp(() => runScheduledReminders('whatsapp connected'));
 });
