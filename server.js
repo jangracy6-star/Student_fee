@@ -13,10 +13,13 @@ const db = require('./database');
 const whatsapp = require('./whatsapp');
 const auth = require('./auth');
 const settingsStore = require('./settings');
+const plans = require('./plans');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const TIMEZONE = process.env.TIMEZONE || 'Asia/Kolkata';
+// Shown to customers whose plan is ending or has ended
+const SUPPORT_CONTACT = process.env.SUPPORT_CONTACT || 'dominova.office@gmail.com';
 
 // If the server was asleep or WhatsApp was offline on a reminder day,
 // that day's reminders still go out during the next couple of days.
@@ -88,13 +91,36 @@ admin.use(auth.requireAdmin);
 
 admin.get('/overview', async (req, res) => {
   try {
-    const [customers, requests, counts] = await Promise.all([
-      db.listUsers('customer'), db.listAccessRequests(), db.countStudentsByOwner()
+    const [customers, requests, counts, adminSettings] = await Promise.all([
+      db.listUsers('customer'), db.listAccessRequests(), db.countStudentsByOwner(), settingsStore.getAdminSettings()
     ]);
     res.json({
-      customers: customers.map(c => ({ ...c, studentCount: counts.get(c.id) || 0 })),
-      requests
+      customers: customers.map(c => ({
+        ...c,
+        studentCount: counts.get(c.id) || 0,
+        plan: plans.planStatus(c, adminSettings.alertDays)
+      })),
+      requests,
+      settings: adminSettings
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+admin.get('/settings', async (req, res) => {
+  try {
+    res.json(await settingsStore.getAdminSettings());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+admin.put('/settings', async (req, res) => {
+  try {
+    const { settings, error } = await settingsStore.saveAdminSettings(req.body);
+    if (error) return res.status(400).json({ error });
+    res.json(settings);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -112,10 +138,25 @@ admin.post('/customers', async (req, res) => {
     if (problem) return res.status(400).json({ error: problem });
     if (await db.getUserForLogin(email)) return res.status(409).json({ error: 'This email already has an account' });
 
-    const customer = await db.createUser({ email, name, role: 'customer', passwordHash: auth.hashPassword(password) });
+    const adminSettings = await settingsStore.getAdminSettings();
+    const { months, error: monthsError } = plans.parseMonths(req.body?.planMonths ?? adminSettings.defaultPlanMonths);
+    if (monthsError) return res.status(400).json({ error: monthsError });
+    const { limit, error: limitError } = plans.parseStudentLimit(
+      req.body?.studentLimit === undefined ? adminSettings.defaultStudentLimit : req.body.studentLimit
+    );
+    if (limitError) return res.status(400).json({ error: limitError });
+
+    const now = new Date();
+    const customer = await db.createUser({
+      email, name, role: 'customer',
+      passwordHash: auth.hashPassword(password),
+      planStartedAt: now.toISOString(),
+      planExpiresAt: plans.addMonths(now, months).toISOString(),
+      studentLimit: limit
+    });
     await db.approveAccessRequestsFor(email);
-    console.log(`👤 ${req.user.email} added customer ${email}`);
-    res.status(201).json({ ...customer, studentCount: 0 });
+    console.log(`👤 ${req.user.email} added customer ${email} (${months} month plan)`);
+    res.status(201).json({ ...customer, studentCount: 0, plan: plans.planStatus(customer, adminSettings.alertDays) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -146,10 +187,34 @@ admin.put('/customers/:id', async (req, res) => {
       fields.active = req.body.active;
       if (!req.body.active) bumpSession = true;
     }
+    if (req.body.studentLimit !== undefined) {
+      const { limit, error } = plans.parseStudentLimit(req.body.studentLimit);
+      if (error) return res.status(400).json({ error });
+      fields.studentLimit = limit;
+    }
+    // Either add months (renewal) or set an exact end date
+    if (req.body.extendMonths !== undefined) {
+      const { months, error } = plans.parseMonths(req.body.extendMonths);
+      if (error) return res.status(400).json({ error });
+      if (!customer.plan_expires_at || new Date(customer.plan_expires_at) <= new Date()) fields.planStartedAt = new Date().toISOString();
+      fields.planExpiresAt = plans.extendPlan(customer.plan_expires_at, months);
+    } else if (req.body.planExpiresAt !== undefined) {
+      if (req.body.planExpiresAt === null) {
+        fields.planExpiresAt = null; // never ends
+      } else {
+        const { expiresAt, error } = plans.parseEndDate(req.body.planExpiresAt);
+        if (error) return res.status(400).json({ error });
+        fields.planExpiresAt = expiresAt;
+      }
+    }
 
     const updated = await db.updateUser(customer.id, fields, { bumpSession });
     auth.forgetUser(customer.id);
-    res.json(updated);
+    if (fields.planExpiresAt !== undefined && fields.planExpiresAt !== customer.plan_expires_at) {
+      await db.logActivity(customer.id, 'Plan Updated', fields.planExpiresAt ? `Plan ends ${fields.planExpiresAt.slice(0, 10)}` : 'Plan never ends');
+    }
+    const adminSettings = await settingsStore.getAdminSettings();
+    res.json({ ...updated, plan: plans.planStatus(updated, adminSettings.alertDays) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -209,6 +274,27 @@ api.get('/config', async (req, res) => {
   }
 });
 
+// The customer's plan: end date, days left, student limit and usage (works even after the plan ends)
+api.get('/plan', async (req, res) => {
+  try {
+    const [adminSettings, studentCount] = await Promise.all([settingsStore.getAdminSettings(), db.countStudents(req.user.id)]);
+    res.json({
+      ...plans.planStatus(req.user, adminSettings.alertDays),
+      alertDays: adminSettings.alertDays,
+      studentCount,
+      contact: SUPPORT_CONTACT
+    });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// Everything below needs an active plan
+api.use((req, res, next) => {
+  if (plans.isPlanActive(req.user)) return next();
+  res.status(402).json({ code: 'plan_expired', error: `Your plan has ended. Contact ${SUPPORT_CONTACT} to renew.` });
+});
+
 // ─── Students ──────────────────────────────────────────
 
 // Each student includes `paid` / `paid_date` for the current month
@@ -229,6 +315,13 @@ api.post('/students', async (req, res) => {
   try {
     const { student, error } = validateStudent(req.body);
     if (error) return res.status(400).json({ error });
+    const limit = req.user.student_limit;
+    if (limit !== null && limit !== undefined && (await db.countStudents(req.user.id)) >= limit) {
+      return res.status(403).json({
+        code: 'student_limit',
+        error: `Your plan allows ${limit} student${limit === 1 ? '' : 's'}. Contact ${SUPPORT_CONTACT} to add more.`
+      });
+    }
     res.status(201).json(await db.createStudent(req.user.id, student));
   } catch (err) {
     sendError(res, err);
@@ -438,7 +531,7 @@ async function runAllScheduledReminders(trigger) {
   if (scheduleRunning) return;
   scheduleRunning = true;
   try {
-    const customers = (await db.listUsers('customer')).filter(c => c.active);
+    const customers = (await db.listUsers('customer')).filter(c => c.active && plans.isPlanActive(c));
     for (const customer of customers) await runScheduledReminders(customer, trigger);
   } catch (err) {
     console.error('❌ Reminder schedule error:', err.message);
@@ -452,7 +545,7 @@ cron.schedule('1 * * * *', () => runAllScheduledReminders('schedule'), { timezon
 
 // Once a week, open each linked WhatsApp briefly so WhatsApp keeps the linked device active
 cron.schedule('30 4 * * 0', async () => {
-  const customers = (await db.listUsers('customer').catch(() => [])).filter(c => c.active);
+  const customers = (await db.listUsers('customer').catch(() => [])).filter(c => c.active && plans.isPlanActive(c));
   for (const customer of customers) {
     await whatsapp.keepAlive(customer.id).catch(err => console.error(`Keep-alive failed for ${customer.email}:`, err.message));
   }
@@ -461,7 +554,7 @@ cron.schedule('30 4 * * 0', async () => {
 // When a customer links WhatsApp, send anything that was waiting for it
 whatsapp.setOnLinked(async (ownerId) => {
   const user = await db.getUserById(ownerId).catch(() => null);
-  if (user?.active && user.role === 'customer') runScheduledReminders(user, 'whatsapp linked');
+  if (user?.active && user.role === 'customer' && plans.isPlanActive(user)) runScheduledReminders(user, 'whatsapp linked');
 });
 
 // ─── Helpers ───────────────────────────────────────────

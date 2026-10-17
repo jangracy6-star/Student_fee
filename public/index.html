@@ -39,6 +39,7 @@
       <symbol id="i-mail" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="22 6 12 13 2 6"/></symbol>
       <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
       <symbol id="i-eye" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></symbol>
       <symbol id="i-back" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></symbol>
       <symbol id="i-send" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></symbol>
       <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
@@ -109,6 +110,18 @@
     </div>
   </div>
 
+  <!-- ═══════ PLAN ENDED (customer) ═══════ -->
+  <div class="login-screen" id="plan-screen" hidden>
+    <div class="login-card">
+      <svg class="i plan-ended-icon"><use href="#i-clock"/></svg>
+      <h1 class="login-title">Your plan has ended</h1>
+      <p class="login-subtitle" id="plan-screen-text">Contact us to renew. Your students and settings are kept.</p>
+      <a class="btn btn-primary btn-block" id="plan-contact" href="#">Contact us to renew</a>
+      <button type="button" class="btn btn-secondary btn-block plan-screen-btn" data-action="check-plan">I've renewed — check again</button>
+      <p class="login-footer"><button type="button" class="link-btn" data-action="logout">Log out</button></p>
+    </div>
+  </div>
+
   <!-- ═══════ HEADER ═══════ -->
   <header class="topbar">
     <div class="brand">
@@ -120,6 +133,9 @@
       <button class="btn btn-icon btn-ghost customer-only" data-action="open-settings" title="Settings" aria-label="Settings">
         <svg class="i"><use href="#i-settings"/></svg>
       </button>
+      <button class="btn btn-icon btn-ghost admin-only" data-action="open-admin-settings" title="Plan settings" aria-label="Plan settings">
+        <svg class="i"><use href="#i-settings"/></svg>
+      </button>
       <button class="btn btn-icon btn-ghost admin-only" data-action="open-account" title="Account" aria-label="Account">
         <svg class="i"><use href="#i-user"/></svg>
       </button>
@@ -127,6 +143,15 @@
   </header>
 
   <main class="page customer-only" id="customer-page">
+
+    <!-- Plan ending soon -->
+    <section class="plan-banner" id="plan-banner" hidden>
+      <svg class="i"><use href="#i-clock"/></svg>
+      <div class="plan-banner-body">
+        <strong id="plan-banner-title">Your plan ends soon</strong>
+        <span id="plan-banner-text"></span>
+      </div>
+    </section>
 
     <!-- WhatsApp / monthly reminder status -->
     <section class="notice" id="reminder-card">
@@ -194,6 +219,14 @@
         <svg class="i"><use href="#i-plus"/></svg> Add<span class="desktop-only">&nbsp;customer</span>
       </button>
     </div>
+
+    <section class="plan-banner" id="admin-alert" hidden>
+      <svg class="i"><use href="#i-clock"/></svg>
+      <div class="plan-banner-body">
+        <strong id="admin-alert-title"></strong>
+        <span id="admin-alert-text"></span>
+      </div>
+    </section>
 
     <div class="toolbar">
       <div class="segmented segmented-2" id="admin-tabs" role="tablist" aria-label="Admin sections">
@@ -333,6 +366,10 @@
               <span class="list-row-label">Email</span>
               <span class="list-row-value" id="set-account-email">—</span>
             </div>
+            <div class="list-row">
+              <span class="list-row-label">Plan</span>
+              <span class="list-row-value" id="set-account-plan">—</span>
+            </div>
             <button class="list-row list-row-btn" data-action="open-password">
               <span class="list-row-label">Change password</span>
               <svg class="i chevron"><use href="#i-back"/></svg>
@@ -377,6 +414,51 @@
           </span>
           <span class="field-hint" id="customer-password-hint">At least 8 characters. You'll share it with the customer.</span>
         </label>
+
+        <div class="field-row" id="customer-new-plan">
+          <label class="field">
+            <span class="field-label">Plan length</span>
+            <select id="customer-plan-months" class="select">
+              <option value="1">1 month</option>
+              <option value="3">3 months</option>
+              <option value="6">6 months</option>
+              <option value="12">12 months</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="field-label">Student limit</span>
+            <input type="number" id="customer-limit-new" min="0" step="1" inputmode="numeric" placeholder="Unlimited" />
+          </label>
+        </div>
+
+        <div class="card plan-card" id="customer-plan-card" hidden>
+          <div class="plan-card-top">
+            <div>
+              <span class="field-label">Plan</span>
+              <strong id="customer-plan-ends">—</strong>
+              <span class="plan-card-sub" id="customer-plan-left"></span>
+            </div>
+            <span class="access-pill" id="customer-plan-pill"></span>
+          </div>
+          <div class="plan-actions">
+            <span class="chips-label">Extend</span>
+            <button type="button" class="chip" data-action="extend-plan" data-months="1">+1 month</button>
+            <button type="button" class="chip" data-action="extend-plan" data-months="3">+3 months</button>
+            <button type="button" class="chip" data-action="extend-plan" data-months="12">+12 months</button>
+          </div>
+          <label class="field field-flush plan-date">
+            <span class="field-label">Or set the end date</span>
+            <span class="date-row">
+              <input type="date" id="customer-plan-date" />
+              <button type="button" class="btn btn-sm btn-secondary" data-action="set-plan-date">Set</button>
+            </span>
+          </label>
+          <label class="field field-flush plan-limit">
+            <span class="field-label">Student limit</span>
+            <input type="number" id="customer-limit" min="0" step="1" inputmode="numeric" placeholder="Unlimited" />
+            <span class="field-hint" id="customer-limit-hint"></span>
+          </label>
+        </div>
 
         <div class="card customer-meta" id="customer-meta" hidden>
           <label class="switch-row">
@@ -440,6 +522,45 @@
           </button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- ═══════ ADMIN: PLAN SETTINGS ═══════ -->
+  <div class="sheet-overlay" id="admin-settings-sheet" role="dialog" aria-modal="true" aria-labelledby="admin-settings-title">
+    <div class="sheet sheet-narrow">
+      <div class="sheet-handle"></div>
+      <div class="sheet-header">
+        <h3 id="admin-settings-title">Plan settings</h3>
+        <button class="sheet-close" data-action="close-sheet" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
+      </div>
+      <form id="admin-settings-form" class="sheet-body" novalidate>
+        <label class="field">
+          <span class="field-label">Alert before a plan ends</span>
+          <span class="input-suffix">
+            <input type="number" id="admin-alert-days" min="1" max="30" step="1" inputmode="numeric" required />
+            <span>days</span>
+          </span>
+          <span class="field-hint">The customer and admins see a warning this many days before the plan ends.</span>
+        </label>
+        <label class="field">
+          <span class="field-label">Default plan length for new customers</span>
+          <select id="admin-default-months" class="select">
+            <option value="1">1 month</option>
+            <option value="3">3 months</option>
+            <option value="6">6 months</option>
+            <option value="12">12 months</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Default student limit for new customers</span>
+          <input type="number" id="admin-default-limit" min="0" step="1" inputmode="numeric" placeholder="Unlimited" />
+        </label>
+        <p class="form-error" id="admin-settings-error" hidden></p>
+        <div class="sheet-actions">
+          <button type="button" class="btn btn-secondary" data-action="close-sheet">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="btn-save-admin-settings">Save</button>
+        </div>
+      </form>
     </div>
   </div>
 

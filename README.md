@@ -5,10 +5,12 @@ A clean, minimal, mobile-first product (light & dark mode) for tuition centres a
 ## Who sees what
 
 **Admins** (`bavayuva789@gmail.com`, `dominova.office@gmail.com`) see only the **Admin page**, with no fee screens:
-- **Customers**: add a customer (name, email, password — or tap *Generate*), then copy the sign-in details to send them. Reset a customer's password, turn their access off or on, or delete them.
+- **Customers**: add a customer (name, email, password — or tap *Generate*, plan length, student limit), then copy the sign-in details to send them. On each customer: extend the plan (+1 / +3 / +12 months or an exact end date), change the student limit, reset the password, turn access off or on, or delete them. Customers whose plan ends soon or has ended are listed first with a warning bar.
+- **Plan settings** (gear icon): how many days before a plan ends to warn (default 3), and the default plan length and student limit for new customers.
 - **Requests**: people who tried to sign in without an account and asked for access (name, email, phone, message). *Give access* opens the Add customer form already filled in; *Dismiss* removes the request.
 
-**Customers** each get their own private workspace:
+**Customers** each get their own private workspace, on a monthly plan with a student limit set by the admin:
+- A warning banner in the last days of the plan; when it ends, the app locks (data is kept and automatic reminders pause) until an admin extends it.
 - Add, edit and delete students (name, WhatsApp number, class, monthly fee).
 - Mark each student **Paid / Unpaid** for the current month, with Collected / Pending totals.
 - **Send now** reminds every unpaid student immediately.
@@ -23,6 +25,7 @@ A clean, minimal, mobile-first product (light & dark mode) for tuition centres a
 In Supabase → **SQL Editor**, run these once, in order:
 1. [`setup-database.sql`](setup-database.sql): students, fees and activity tables (skip if you already have them).
 2. [`migrations/002_accounts.sql`](migrations/002_accounts.sql): accounts, access requests, the two admin emails, and moves the existing students to `192511116.simats@saveetha.com`.
+3. [`migrations/003_plans.sql`](migrations/003_plans.sql): plan end dates and student limits (existing customers get one month and 100 students).
 
 ### 2. Configure
 
@@ -36,6 +39,7 @@ cp .env.example .env
 | `SUPABASE_SERVICE_ROLE_KEY` | ✅ | `service_role` key (keep it secret, server only) |
 | `ADMIN_PASSWORD` | ✅ first time | First password for the admin emails (min 8 characters). Only used while an admin has no password; change it in the app after signing in |
 | `ADMIN_EMAILS` | | Comma-separated admin emails (default: the two above) |
+| `SUPPORT_CONTACT` | | Email shown to customers to renew (default `dominova.office@gmail.com`) |
 | `WHATSAPP_MAX_ACTIVE` | | Customers' WhatsApp running at once (default `1`, fits Render's free plan; ~250 MB each) |
 | `TIMEZONE` | | Timezone for reminder days and the current month (default `Asia/Kolkata`) |
 | `SESSION_SECRET` | | Signs login cookies (defaults to one derived from the Supabase key) |
@@ -78,7 +82,8 @@ auth.js           Email + password accounts, sessions, roles, password changes
 database.js       Supabase queries (everything scoped to the customer)
 whatsapp.js       One WhatsApp per customer, started on demand, reminder messages
 session-store.js  Saves WhatsApp logins to Supabase Storage
-settings.js       Each customer's institute name, reminder days and message
+settings.js       Each customer's institute name, reminder days and message; admin plan settings
+plans.js          Plan end dates, days left, student limits
 migrations/       SQL to run in Supabase
 public/           Frontend (index.html, css, js/app.js, js/admin.js, PWA)
 ```

@@ -18,7 +18,7 @@ const supabase = createClient(
 
 const REMINDER_ACTION = 'Monthly Reminders';
 const MANUAL_REMINDER_ACTION = 'Manual Reminders';
-const USER_FIELDS = 'id, email, name, role, active, session_version, created_at, last_login_at';
+const USER_FIELDS = 'id, email, name, role, active, session_version, created_at, last_login_at, plan_started_at, plan_expires_at, student_limit';
 
 // ─── Accounts ──────────────────────────────────────────
 
@@ -55,10 +55,16 @@ async function listUsers(role) {
   return data;
 }
 
-async function createUser({ email, name, role, passwordHash }) {
+async function createUser({ email, name, role, passwordHash, planStartedAt = null, planExpiresAt = null, studentLimit = null }) {
   const { data, error } = await supabase
     .from('app_users')
-    .insert({ email, name, role, password_hash: passwordHash })
+    .insert({
+      email, name, role,
+      password_hash: passwordHash,
+      plan_started_at: planStartedAt,
+      plan_expires_at: planExpiresAt,
+      student_limit: studentLimit
+    })
     .select(USER_FIELDS)
     .single();
   if (error) throw error;
@@ -72,6 +78,9 @@ async function updateUser(id, fields, { bumpSession = false } = {}) {
   if (fields.active !== undefined) changes.active = fields.active;
   if (fields.passwordHash !== undefined) changes.password_hash = fields.passwordHash;
   if (fields.lastLoginAt !== undefined) changes.last_login_at = fields.lastLoginAt;
+  if (fields.planStartedAt !== undefined) changes.plan_started_at = fields.planStartedAt;
+  if (fields.planExpiresAt !== undefined) changes.plan_expires_at = fields.planExpiresAt;
+  if (fields.studentLimit !== undefined) changes.student_limit = fields.studentLimit;
 
   if (bumpSession) {
     const current = await getUserById(id);
@@ -99,6 +108,15 @@ async function ensureAdmins(emails, passwordHash) {
       await updateUser(existing.id, { passwordHash });
     }
   }
+}
+
+async function countStudents(ownerId) {
+  const { count, error } = await supabase
+    .from('students')
+    .select('id', { count: 'exact', head: true })
+    .eq('owner_id', ownerId);
+  if (error) throw error;
+  return count;
 }
 
 /** Number of students per customer id */
@@ -333,6 +351,7 @@ module.exports = {
   updateUser,
   deleteUser,
   ensureAdmins,
+  countStudents,
   countStudentsByOwner,
   upsertAccessRequest,
   listAccessRequests,

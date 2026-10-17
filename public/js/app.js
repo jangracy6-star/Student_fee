@@ -9,6 +9,7 @@ const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
 // ─── State ─────────────────────────────────────────────
 const state = {
   user: null,           // signed-in account { id, email, name, role }
+  plan: null,           // customer's plan { expiresAt, daysLeft, expired, endingSoon, studentLimit, studentCount, alertDays, contact }
   config: { institution: 'Student Fees', currentMonth: null },
   students: [],
   filter: 'all', // 'all' | 'paid' | 'unpaid'
@@ -59,8 +60,82 @@ async function startApp() {
     // keep defaults
   }
   setInstitutionName(state.config.institution);
+  if (!(await loadPlan())) return; // plan has ended — the plan screen is showing
   loadStudents();
   startWhatsAppPolling();
+}
+
+// ═══════════════════════════════════════════════════════
+//  PLAN (customer)
+// ═══════════════════════════════════════════════════════
+
+/** Load the plan; returns false (and shows the plan-ended screen) if it has ended */
+async function loadPlan() {
+  try {
+    state.plan = await api('/api/plan');
+  } catch (err) {
+    return !$('plan-screen').hidden ? false : true; // keep going on network errors
+  }
+  if (state.plan.expired) {
+    showPlanScreen();
+    return false;
+  }
+  $('plan-screen').hidden = true;
+  renderPlanBanner();
+  return true;
+}
+
+function showPlanScreen() {
+  clearInterval(waPollTimer);
+  clearInterval(qrPollTimer);
+  while (sheetStack.length) hideTopSheet();
+  const plan = state.plan || {};
+  const contact = plan.contact || 'us';
+  $('plan-screen-text').textContent = `${plan.expiresAt ? `It ended on ${formatDate(plan.expiresAt)}. ` : ''}Contact ${contact} to renew. Your students and settings are kept, and automatic reminders will start again after renewal.`;
+  $('plan-contact').href = /@/.test(contact)
+    ? `mailto:${contact}?subject=${encodeURIComponent('Renew my FeeFlow plan')}&body=${encodeURIComponent(`Please renew the plan for ${state.user?.email || ''}.`)}`
+    : '#';
+  $('plan-screen').hidden = false;
+}
+
+async function checkPlanAgain() {
+  if (await loadPlan()) {
+    showToast('Your plan is active again', 'success');
+    loadStudents();
+    startWhatsAppPolling();
+  } else {
+    showToast('Your plan is still not renewed', 'warning');
+  }
+}
+
+function renderPlanBanner() {
+  const plan = state.plan;
+  const banner = $('plan-banner');
+  if (!plan?.endingSoon) {
+    banner.hidden = true;
+    return;
+  }
+  const when = plan.daysLeft <= 1 ? 'today' : `in ${plan.daysLeft} days`;
+  $('plan-banner-title').textContent = `Your plan ends ${when}`;
+  $('plan-banner-text').textContent = `It ends on ${formatDate(plan.expiresAt)}. Contact ${plan.contact} to renew and keep your reminders running.`;
+  banner.classList.toggle('danger', plan.daysLeft <= 1);
+  banner.hidden = false;
+}
+
+function atStudentLimit() {
+  const limit = state.plan?.studentLimit;
+  return limit !== null && limit !== undefined && state.students.length >= limit;
+}
+
+async function showStudentLimit() {
+  const limit = state.plan.studentLimit;
+  const contact = state.plan.contact;
+  const ok = await confirmDialog({
+    title: 'Student limit reached',
+    message: `Your plan allows ${limit} student${limit === 1 ? '' : 's'}. Contact ${contact} to add more.`,
+    confirmLabel: 'Contact us'
+  });
+  if (ok && /@/.test(contact)) location.href = `mailto:${contact}?subject=${encodeURIComponent('Increase my FeeFlow student limit')}`;
 }
 
 function setInstitutionName(name) {
@@ -82,6 +157,11 @@ async function api(path, { method = 'GET', body } = {}) {
   let data = null;
   try { data = await res.json(); } catch (err) { /* empty body */ }
 
+  if (res.status === 402 && data?.code === 'plan_expired') {
+    if (state.plan) state.plan.expired = true;
+    showPlanScreen();
+    throw new Error(data.error);
+  }
   if (res.status === 401 && path !== '/api/login') {
     showLogin('login', 'Your session has ended. Please sign in again.');
     throw new Error('Please sign in');
@@ -196,14 +276,19 @@ async function handleAccessRequest(event) {
 }
 
 async function logout() {
-  if (!await confirmDialog({ title: 'Log out?', message: 'You can sign in again with your email and password.', confirmLabel: 'Log out' })) return;
+  // On the plan-ended screen there's nothing to lose, and dialogs would open behind it
+  const ask = $('plan-screen').hidden;
+  if (ask && !await confirmDialog({ title: 'Log out?', message: 'You can sign in again with your email and password.', confirmLabel: 'Log out' })) return;
   await api('/api/logout', { method: 'POST' }).catch(() => {});
   state.user = null;
   state.students = [];
   state.studentsLoaded = false;
   state.wa = { status: null };
   state.reminders = null;
+  state.plan = null;
   $('students-list').innerHTML = '';
+  $('plan-screen').hidden = true;
+  $('plan-banner').hidden = true;
   showLogin();
 }
 
@@ -292,9 +377,11 @@ function renderStudents() {
   const collected = sumFees(state.students.filter(s => s.paid));
   const pending = sumFees(state.students.filter(s => !s.paid));
 
-  $('month-label').textContent = state.config.currentMonth
-    ? `${formatMonth(state.config.currentMonth)} · ${total} student${total === 1 ? '' : 's'}`
+  const limit = state.plan?.studentLimit;
+  const countText = limit !== null && limit !== undefined
+    ? `${total} of ${limit} students`
     : `${total} student${total === 1 ? '' : 's'}`;
+  $('month-label').textContent = state.config.currentMonth ? `${formatMonth(state.config.currentMonth)} · ${countText}` : countText;
   $('stats').hidden = total === 0;
   $('stat-collected').textContent = formatMoney(collected);
   $('stat-pending').textContent = formatMoney(pending);
@@ -638,6 +725,10 @@ async function openSettings() {
   $('set-institution').value = state.draft.institutionName;
   $('set-institution').placeholder = state.settings.account?.name || 'e.g., Bright Future Academy';
   $('set-account-email').textContent = state.settings.account?.email || state.user?.email || '—';
+  const plan = state.plan;
+  $('set-account-plan').textContent = !plan ? '—'
+    : [plan.expiresAt ? `Ends ${formatDate(plan.expiresAt)}` : 'No end date',
+       plan.studentLimit !== null && plan.studentLimit !== undefined ? `${plan.studentLimit} students` : 'unlimited students'].join(' · ');
   $('set-auto').checked = state.draft.autoEnabled;
   $('set-message').value = state.draft.messageTemplate;
   $('settings-error').hidden = true;
@@ -979,9 +1070,14 @@ function bindEvents() {
 
   // Refresh when coming back to the app
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && $('login-screen').hidden) {
-      updateWhatsAppStatus();
-      loadStudents();
+    if (!document.hidden && $('login-screen').hidden && state.user?.role === 'customer') {
+      loadPlan().then(active => {
+        if (!active) return;
+        updateWhatsAppStatus();
+        loadStudents();
+      });
+    } else if (!document.hidden && state.user?.role === 'admin') {
+      loadAdmin();
     }
   });
 
@@ -990,7 +1086,8 @@ function bindEvents() {
     if (!el) return;
 
     switch (el.dataset.action) {
-      case 'add-student': openStudentForm(); break;
+      case 'add-student': atStudentLimit() ? showStudentLimit() : openStudentForm(); break;
+      case 'check-plan': checkPlanAgain(); break;
       case 'edit-student': {
         const student = state.students.find(s => s.id === Number(el.dataset.id));
         if (student) openStudentForm(student);

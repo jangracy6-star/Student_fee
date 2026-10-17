@@ -105,4 +105,62 @@ async function deleteSettings(ownerId) {
   if (error) throw error;
 }
 
-module.exports = { DEFAULT_TEMPLATE, getSettings, saveSettings, deleteSettings };
+// ─── Admin-wide settings (admin.json) ──────────────────
+
+const ADMIN_FILE = 'admin.json';
+const ADMIN_DEFAULTS = {
+  alertDays: 3,             // warn customers and admins this many days before a plan ends
+  defaultPlanMonths: 1,     // plan length pre-selected when adding a customer
+  defaultStudentLimit: 100  // student limit pre-filled when adding a customer (null = unlimited)
+};
+let adminCache = null;
+
+async function getAdminSettings() {
+  if (adminCache) return adminCache;
+  try {
+    await ensureBucket();
+    const { data, error } = await supabase.storage.from(BUCKET).download(ADMIN_FILE);
+    if (error) throw error;
+    adminCache = { ...ADMIN_DEFAULTS, ...JSON.parse(await data.text()) };
+  } catch (err) {
+    if (!/not found|does not exist|404/i.test(err.message || '')) {
+      console.error('⚠️  Could not read admin settings, using defaults:', err.message);
+    }
+    adminCache = { ...ADMIN_DEFAULTS };
+  }
+  return adminCache;
+}
+
+/** Validate and save; returns { settings } or { error } */
+async function saveAdminSettings(input = {}) {
+  const next = { ...(await getAdminSettings()) };
+
+  if (input.alertDays !== undefined) {
+    const days = Number(input.alertDays);
+    if (!Number.isInteger(days) || days < 1 || days > 30) return { error: 'Alert days must be between 1 and 30' };
+    next.alertDays = days;
+  }
+  if (input.defaultPlanMonths !== undefined) {
+    const months = Number(input.defaultPlanMonths);
+    if (!Number.isInteger(months) || months < 1 || months > 36) return { error: 'Default plan length must be 1–36 months' };
+    next.defaultPlanMonths = months;
+  }
+  if (input.defaultStudentLimit !== undefined) {
+    const raw = input.defaultStudentLimit;
+    const limit = raw === null || raw === '' ? null : Number(raw);
+    if (limit !== null && (!Number.isInteger(limit) || limit < 0 || limit > 100000)) {
+      return { error: 'Default student limit must be a whole number (or empty for unlimited)' };
+    }
+    next.defaultStudentLimit = limit;
+  }
+
+  await ensureBucket();
+  const { error } = await supabase.storage.from(BUCKET)
+    .upload(ADMIN_FILE, JSON.stringify(next, null, 2), { upsert: true, contentType: 'application/json' });
+  if (error) throw error;
+
+  adminCache = next;
+  return { settings: next };
+}
+
+module.exports = { DEFAULT_TEMPLATE, getSettings, saveSettings, deleteSettings, getAdminSettings, saveAdminSettings };

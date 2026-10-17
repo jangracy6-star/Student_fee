@@ -50,6 +50,10 @@ async function testConnection() {
       console.log(accErr ? `   ❌ ${table} table is missing — run migrations/002_accounts.sql` : `   ✅ ${table} table exists!`);
     }
 
+    // Plan columns (migrations/003_plans.sql)
+    const { error: planErr } = await supabase.from('app_users').select('plan_expires_at, student_limit').limit(1);
+    console.log(planErr ? '   ❌ plan columns are missing — run migrations/003_plans.sql' : '   ✅ plan columns exist!');
+
     // Test activity_log table
     const { error: logErr } = await supabase.from('activity_log').select('count', { count: 'exact', head: true });
     if (logErr) {

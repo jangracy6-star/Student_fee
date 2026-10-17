@@ -3,3 +3,14 @@ node_modules/
 .wwebjs_auth/
 .wwebjs_cache/
 .DS_Store
+.claude/
+
+# Android app: build output, dependencies and signing secrets
+mobile/node_modules/
+mobile/android/.gradle/
+mobile/android/build/
+mobile/android/app/build/
+mobile/android/local.properties
+mobile/android/keystore.properties
+mobile/keystore/
+dist/
