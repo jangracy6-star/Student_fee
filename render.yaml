@@ -11,7 +11,7 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
-      - key: INSTITUTION_NAME
+      - key: ADMIN_PASSWORD
         sync: false
       - key: TIMEZONE
         value: Asia/Kolkata

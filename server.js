@@ -1,6 +1,7 @@
 /**
- * Student Fee Management System — Express Server
- * Students API, WhatsApp connection, settings, and scheduled reminders
+ * Student Fee Reminders — Express Server
+ * Accounts (admins + paying customers), each customer's students, WhatsApp, settings
+ * and scheduled reminders, plus the admin API for managing customers and access requests.
  */
 require('dotenv').config();
 const express = require('express');
@@ -15,7 +16,6 @@ const settingsStore = require('./settings');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const INSTITUTION_NAME = process.env.INSTITUTION_NAME || 'Student Academy';
 const TIMEZONE = process.env.TIMEZONE || 'Asia/Kolkata';
 
 // If the server was asleep or WhatsApp was offline on a reminder day,
@@ -28,168 +28,339 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ─── Health Check & Session ────────────────────────────
+// ═══════════════════════════════════════════════════════
+//  PUBLIC — health, login, access requests
+// ═══════════════════════════════════════════════════════
+
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', institution: INSTITUTION_NAME, timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 app.get('/api/session', auth.session);
 app.post('/api/login', auth.login);
 app.post('/api/logout', auth.logout);
 
-// Everything below requires login (when ADMIN_PASSWORD is set)
-app.use('/api', auth.requireAuth);
+const requestLimits = new Map(); // ip -> { count, resetAt }
 
-app.get('/api/config', (req, res) => {
-  res.json({ institution: INSTITUTION_NAME, authEnabled: auth.enabled, currentMonth: nowInTimezone().month });
-});
-
-// ═══════════════════════════════════════════════════════
-//  STUDENT ROUTES
-// ═══════════════════════════════════════════════════════
-
-// Each student includes `paid` / `paid_date` for the current month
-app.get('/api/students', async (req, res) => {
+// Someone without an account asks for access; admins see it on the Admin page
+app.post('/api/access-requests', async (req, res) => {
   try {
-    const { month } = nowInTimezone();
-    const [students, payments] = await Promise.all([db.getAllStudents(), db.getPaymentsForMonth(month)]);
-    res.json(students.map(s => {
-      const payment = payments.get(s.id);
-      return { ...s, paid: payment?.status === 'paid', paid_date: payment?.status === 'paid' ? payment.paid_date : null };
-    }));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+    const limit = requestLimits.get(req.ip);
+    if (limit && limit.resetAt > Date.now() && limit.count >= 5) {
+      return res.status(429).json({ error: 'Too many requests. Please try again later.' });
+    }
+    requestLimits.set(req.ip, limit && limit.resetAt > Date.now()
+      ? { ...limit, count: limit.count + 1 }
+      : { count: 1, resetAt: Date.now() + 60 * 60 * 1000 });
 
-app.post('/api/students', async (req, res) => {
-  try {
-    const { student, error } = validateStudent(req.body);
-    if (error) return res.status(400).json({ error });
-    res.status(201).json(await db.createStudent(student));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+    const name = String(req.body?.name || '').trim();
+    const email = auth.normalizeEmail(req.body?.email);
+    const phone = String(req.body?.phone || '').replace(/[^\d+ ]/g, '').trim();
+    const message = String(req.body?.message || '').trim();
 
-app.put('/api/students/:id', async (req, res) => {
-  try {
-    const { student, error } = validateStudent(req.body);
-    if (error) return res.status(400).json({ error });
-    res.json(await db.updateStudent(parseId(req.params.id), student));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+    if (!name || name.length > 100) return res.status(400).json({ error: 'Enter your name' });
+    if (!auth.isValidEmail(email)) return res.status(400).json({ error: 'Enter a valid email address' });
+    if (phone.length > 20) return res.status(400).json({ error: 'Phone number is too long' });
+    if (message.length > 500) return res.status(400).json({ error: 'Message is too long (max 500 characters)' });
 
-// Mark a student paid / not paid for the current month
-app.put('/api/students/:id/payment', async (req, res) => {
-  try {
-    if (typeof req.body.paid !== 'boolean') return res.status(400).json({ error: '"paid" must be true or false' });
-    const { month } = nowInTimezone();
-    const record = await db.setPaymentStatus(parseId(req.params.id), month, req.body.paid);
-    res.json({ month, paid: record.status === 'paid', paid_date: record.paid_date });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.delete('/api/students/:id', async (req, res) => {
-  try {
-    await db.deleteStudent(parseId(req.params.id));
-    res.json({ message: 'Student deleted successfully' });
+    if (await db.getUserForLogin(email)) {
+      return res.status(409).json({ error: 'This email already has an account. Try logging in.' });
+    }
+    await db.upsertAccessRequest({ name, email, phone, message });
+    res.status(201).json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // ═══════════════════════════════════════════════════════
-//  WHATSAPP & REMINDER ROUTES
+//  ACCOUNT — any signed-in user
 // ═══════════════════════════════════════════════════════
 
-app.get('/api/whatsapp/status', (req, res) => {
-  res.json(whatsapp.getStatus());
-});
+app.post('/api/account/password', auth.requireLogin, auth.changePassword);
 
-app.get('/api/whatsapp/qr', (req, res) => {
-  const qr = whatsapp.getQRCode();
-  const status = whatsapp.getStatus();
-  if (qr) {
-    res.json({ qr, status: status.status });
-  } else if (status.status === 'connected') {
-    res.json({ status: status.status, message: 'Already connected — no QR needed' });
-  } else {
-    res.json({ status: status.status, message: status.message || 'QR code not available yet. Please wait...' });
-  }
-});
+// ═══════════════════════════════════════════════════════
+//  ADMIN — manage customers and access requests
+// ═══════════════════════════════════════════════════════
 
-app.post('/api/whatsapp/logout', async (req, res) => {
+const admin = express.Router();
+admin.use(auth.requireAdmin);
+
+admin.get('/overview', async (req, res) => {
   try {
-    await whatsapp.logout();
-    await db.logActivity('WhatsApp Logged Out', 'Device unlinked from the dashboard');
-    res.json({ message: 'WhatsApp logged out' });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// When the last reminder went out and when the next scheduled one will
-app.get('/api/reminders', async (req, res) => {
-  try {
-    const { month, day } = nowInTimezone();
-    const settings = await settingsStore.getSettings();
-    const [last, sentDays] = await Promise.all([db.getLastReminderRun(), db.getScheduledDaysSent(month)]);
+    const [customers, requests, counts] = await Promise.all([
+      db.listUsers('customer'), db.listAccessRequests(), db.countStudentsByOwner()
+    ]);
     res.json({
-      lastRun: last,
-      nextDate: settings.autoEnabled ? nextReminderDate(settings.reminderDays, month, day, sentDays) : null,
-      autoEnabled: settings.autoEnabled,
-      running: reminderRunning
+      customers: customers.map(c => ({ ...c, studentCount: counts.get(c.id) || 0 })),
+      requests
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Send this month's reminder to every unpaid student right now (runs in the background)
-app.post('/api/reminders/send-now', async (req, res) => {
+admin.post('/customers', async (req, res) => {
   try {
-    if (reminderRunning) return res.status(409).json({ error: 'Reminders are already being sent' });
-    if (whatsapp.getStatus().status !== 'connected') {
-      return res.status(400).json({ error: 'Connect WhatsApp first' });
+    const name = String(req.body?.name || '').trim();
+    const email = auth.normalizeEmail(req.body?.email);
+    const password = req.body?.password;
+
+    if (!name || name.length > 100) return res.status(400).json({ error: 'Enter the customer’s name or institute' });
+    if (!auth.isValidEmail(email)) return res.status(400).json({ error: 'Enter a valid email address' });
+    const problem = auth.validatePassword(password);
+    if (problem) return res.status(400).json({ error: problem });
+    if (await db.getUserForLogin(email)) return res.status(409).json({ error: 'This email already has an account' });
+
+    const customer = await db.createUser({ email, name, role: 'customer', passwordHash: auth.hashPassword(password) });
+    await db.approveAccessRequestsFor(email);
+    console.log(`👤 ${req.user.email} added customer ${email}`);
+    res.status(201).json({ ...customer, studentCount: 0 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Rename, reset password, or turn access on/off
+admin.put('/customers/:id', async (req, res) => {
+  try {
+    const customer = await db.getUserById(req.params.id);
+    if (!customer || customer.role !== 'customer') return res.status(404).json({ error: 'Customer not found' });
+
+    const fields = {};
+    let bumpSession = false;
+
+    if (req.body.name !== undefined) {
+      const name = String(req.body.name).trim();
+      if (!name || name.length > 100) return res.status(400).json({ error: 'Enter the customer’s name or institute' });
+      fields.name = name;
     }
+    if (req.body.password !== undefined) {
+      const problem = auth.validatePassword(req.body.password);
+      if (problem) return res.status(400).json({ error: problem });
+      fields.passwordHash = auth.hashPassword(req.body.password);
+      bumpSession = true; // sign the customer out of every device
+    }
+    if (req.body.active !== undefined) {
+      if (typeof req.body.active !== 'boolean') return res.status(400).json({ error: '"active" must be true or false' });
+      fields.active = req.body.active;
+      if (!req.body.active) bumpSession = true;
+    }
+
+    const updated = await db.updateUser(customer.id, fields, { bumpSession });
+    auth.forgetUser(customer.id);
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Permanently delete a customer and all of their students, payments and settings
+admin.delete('/customers/:id', async (req, res) => {
+  try {
+    const customer = await db.getUserById(req.params.id);
+    if (!customer || customer.role !== 'customer') return res.status(404).json({ error: 'Customer not found' });
+
+    await whatsapp.logout(customer.id).catch(err => console.error('WhatsApp cleanup failed:', err.message));
+    await settingsStore.deleteSettings(customer.id).catch(err => console.error('Settings cleanup failed:', err.message));
+    await db.deleteUser(customer.id);
+    auth.forgetUser(customer.id);
+    console.log(`🗑️  ${req.user.email} deleted customer ${customer.email}`);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+admin.post('/requests/:id/dismiss', async (req, res) => {
+  try {
+    await db.setAccessRequestStatus(parseId(req.params.id), 'dismissed');
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.use('/api/admin', admin);
+
+// ═══════════════════════════════════════════════════════
+//  CUSTOMER — everything below is scoped to the signed-in customer
+// ═══════════════════════════════════════════════════════
+
+const api = express.Router();
+api.use(auth.requireCustomer);
+
+async function institutionNameFor(user) {
+  const settings = await settingsStore.getSettings(user.id);
+  return settings.institutionName || user.name || 'Your institute';
+}
+
+// Turns "student not found / not yours" into a 404 instead of a server error
+function sendError(res, err) {
+  const notFound = err.code === 'PGRST116';
+  res.status(notFound ? 404 : 500).json({ error: notFound ? 'Student not found' : err.message });
+}
+
+api.get('/config', async (req, res) => {
+  try {
+    res.json({ institution: await institutionNameFor(req.user), currentMonth: nowInTimezone().month });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// ─── Students ──────────────────────────────────────────
+
+// Each student includes `paid` / `paid_date` for the current month
+api.get('/students', async (req, res) => {
+  try {
     const { month } = nowInTimezone();
-    const students = await getUnpaidStudents(month);
+    const [students, payments] = await Promise.all([db.getAllStudents(req.user.id), db.getPaymentsForMonth(req.user.id, month)]);
+    res.json(students.map(s => {
+      const payment = payments.get(s.id);
+      return { ...s, paid: payment?.status === 'paid', paid_date: payment?.status === 'paid' ? payment.paid_date : null };
+    }));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+api.post('/students', async (req, res) => {
+  try {
+    const { student, error } = validateStudent(req.body);
+    if (error) return res.status(400).json({ error });
+    res.status(201).json(await db.createStudent(req.user.id, student));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+api.put('/students/:id', async (req, res) => {
+  try {
+    const { student, error } = validateStudent(req.body);
+    if (error) return res.status(400).json({ error });
+    res.json(await db.updateStudent(req.user.id, parseId(req.params.id), student));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// Mark a student paid / not paid for the current month
+api.put('/students/:id/payment', async (req, res) => {
+  try {
+    if (typeof req.body.paid !== 'boolean') return res.status(400).json({ error: '"paid" must be true or false' });
+    const { month } = nowInTimezone();
+    const record = await db.setPaymentStatus(req.user.id, parseId(req.params.id), month, req.body.paid);
+    res.json({ month, paid: record.status === 'paid', paid_date: record.paid_date });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+api.delete('/students/:id', async (req, res) => {
+  try {
+    await db.deleteStudent(req.user.id, parseId(req.params.id));
+    res.json({ message: 'Student deleted successfully' });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// ─── WhatsApp ──────────────────────────────────────────
+
+api.get('/whatsapp/status', async (req, res) => {
+  try {
+    res.json(await whatsapp.getStatus(req.user.id));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// Polled while the "Connect WhatsApp" screen is open; starts WhatsApp to show a QR code if needed
+api.get('/whatsapp/qr', async (req, res) => {
+  try {
+    res.json(await whatsapp.getQR(req.user.id));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+api.post('/whatsapp/logout', async (req, res) => {
+  try {
+    await whatsapp.logout(req.user.id);
+    await db.logActivity(req.user.id, 'WhatsApp Logged Out', 'Device unlinked from the dashboard');
+    res.json({ message: 'WhatsApp logged out' });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// ─── Reminders ─────────────────────────────────────────
+
+// When the last reminder went out and when the next scheduled one will
+api.get('/reminders', async (req, res) => {
+  try {
+    const { month, day } = nowInTimezone();
+    const settings = await settingsStore.getSettings(req.user.id);
+    const [last, sentDays] = await Promise.all([db.getLastReminderRun(req.user.id), db.getScheduledDaysSent(req.user.id, month)]);
+    res.json({
+      lastRun: last,
+      nextDate: settings.autoEnabled ? nextReminderDate(settings.reminderDays, month, day, sentDays) : null,
+      autoEnabled: settings.autoEnabled,
+      running: runningOwners.has(req.user.id)
+    });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// Send this month's reminder to every unpaid student right now (runs in the background)
+api.post('/reminders/send-now', async (req, res) => {
+  try {
+    const ownerId = req.user.id;
+    if (runningOwners.has(ownerId)) return res.status(409).json({ error: 'Reminders are already being sent' });
+    const { status } = await whatsapp.getStatus(ownerId);
+    if (!['connected', 'linked'].includes(status)) return res.status(400).json({ error: 'Connect WhatsApp first' });
+
+    const { month } = nowInTimezone();
+    const students = await getUnpaidStudents(ownerId, month);
     if (students.length === 0) return res.json({ count: 0, message: 'Everyone has paid this month' });
 
-    sendReminders(students, month, 'send now', (results) => db.logManualReminderRun(month, results.sent, results.failed));
+    sendReminders(req.user, students, month, 'send now', (results) => db.logManualReminderRun(ownerId, month, results.sent, results.failed));
     res.status(202).json({ count: students.length });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendError(res, err);
   }
 });
 
-// ═══════════════════════════════════════════════════════
-//  SETTINGS
-// ═══════════════════════════════════════════════════════
+// ─── Settings ──────────────────────────────────────────
 
-app.get('/api/settings', async (req, res) => {
+api.get('/settings', async (req, res) => {
   try {
-    res.json({ ...(await settingsStore.getSettings()), defaultTemplate: settingsStore.DEFAULT_TEMPLATE, institution: INSTITUTION_NAME });
+    const settings = await settingsStore.getSettings(req.user.id);
+    res.json({
+      ...settings,
+      defaultTemplate: settingsStore.DEFAULT_TEMPLATE,
+      institution: await institutionNameFor(req.user),
+      account: { email: req.user.email, name: req.user.name }
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendError(res, err);
   }
 });
 
-app.put('/api/settings', async (req, res) => {
+api.put('/settings', async (req, res) => {
   try {
-    const { settings, error } = await settingsStore.saveSettings(req.body);
+    const { settings, error } = await settingsStore.saveSettings(req.user.id, req.body);
     if (error) return res.status(400).json({ error });
-    await db.logActivity('Settings Updated', `Reminder days: ${settings.reminderDays.join(', ') || 'none'} | Automatic: ${settings.autoEnabled ? 'on' : 'off'}`);
-    res.json(settings);
+    await db.logActivity(req.user.id, 'Settings Updated', `Reminder days: ${settings.reminderDays.join(', ') || 'none'} | Automatic: ${settings.autoEnabled ? 'on' : 'off'}`);
+    res.json({ ...settings, institution: await institutionNameFor(req.user) });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendError(res, err);
   }
 });
+
+app.use('/api', api);
 
 app.use('/api', (req, res) => {
   res.status(404).json({ error: 'Not found' });
@@ -199,67 +370,99 @@ app.use('/api', (req, res) => {
 //  REMINDERS
 // ═══════════════════════════════════════════════════════
 
-let reminderRunning = false;
-const sentKeys = new Set(); // 'YYYY-MM:day' — in-memory guard so a failed log write can never cause a resend
+const runningOwners = new Set();
+const sentKeys = new Set(); // 'ownerId:YYYY-MM:day' — in-memory guard so a failed log write can never cause a resend
 
-/** Students not marked paid for `month` */
-async function getUnpaidStudents(month) {
-  const [allStudents, payments] = await Promise.all([db.getAllStudents(), db.getPaymentsForMonth(month)]);
+/** A customer's students not marked paid for `month` */
+async function getUnpaidStudents(ownerId, month) {
+  const [allStudents, payments] = await Promise.all([db.getAllStudents(ownerId), db.getPaymentsForMonth(ownerId, month)]);
   return allStudents.filter(s => payments.get(s.id)?.status !== 'paid');
 }
 
-/** Send the reminder to `students` using the saved message, then call `onDone(results)` */
-async function sendReminders(students, month, trigger, onDone) {
-  reminderRunning = true;
+/** Send the reminder to `students` from this customer's WhatsApp, then call `onDone(results)` */
+async function sendReminders(user, students, month, trigger, onDone) {
+  runningOwners.add(user.id);
   try {
-    const { messageTemplate } = await settingsStore.getSettings();
-    console.log(`\n🗓️  Sending ${month} reminders to ${students.length} unpaid students (${trigger})`);
-    const results = await whatsapp.sendFeeReminders(students, month, INSTITUTION_NAME, messageTemplate);
+    const settings = await settingsStore.getSettings(user.id);
+    const institution = settings.institutionName || user.name || 'Your institute';
+    console.log(`\n🗓️  ${user.email}: sending ${month} reminders to ${students.length} unpaid students (${trigger})`);
+    const results = await whatsapp.sendFeeReminders(user.id, students, month, institution, settings.messageTemplate);
     await onDone(results);
     console.log(`   📱 Sent: ${results.sent}, failed: ${results.failed}`);
     return results;
   } catch (err) {
-    console.error('   ❌ Reminder error:', err.message);
+    console.error(`   ❌ Reminder error for ${user.email}:`, err.message);
   } finally {
-    reminderRunning = false;
+    runningOwners.delete(user.id);
   }
 }
 
-/** Send any scheduled reminders that are due today (or were missed in the last few days) */
-async function runScheduledReminders(trigger) {
-  if (reminderRunning) return;
-  const settings = await settingsStore.getSettings();
+/** Send a customer's scheduled reminders that are due today (or were missed in the last few days) */
+async function runScheduledReminders(user, trigger) {
+  if (runningOwners.has(user.id)) return;
+  const settings = await settingsStore.getSettings(user.id);
   if (!settings.autoEnabled) return;
 
   const { month, day } = nowInTimezone();
-  const due = dueDays(settings.reminderDays, month, day).filter(d => !sentKeys.has(`${month}:${d}`));
+  const key = (d) => `${user.id}:${month}:${d}`;
+  const due = dueDays(settings.reminderDays, month, day).filter(d => !sentKeys.has(key(d)));
   if (due.length === 0) return;
 
-  if (whatsapp.getStatus().status !== 'connected') {
-    console.log(`⏳ Reminders for ${month} (day ${due.join(', ')}) waiting for WhatsApp to connect (${trigger})`);
+  const { status } = await whatsapp.getStatus(user.id);
+  if (!['connected', 'linked'].includes(status)) {
+    console.log(`⏳ ${user.email}: reminders for ${month} (day ${due.join(', ')}) waiting for WhatsApp to be linked (${trigger})`);
     return;
   }
 
   try {
-    const sentDays = await db.getScheduledDaysSent(month);
+    const sentDays = await db.getScheduledDaysSent(user.id, month);
+    due.filter(d => sentDays.has(d)).forEach(d => sentKeys.add(key(d)));
     const remaining = due.filter(d => !sentDays.has(d));
-    due.filter(d => sentDays.has(d)).forEach(d => sentKeys.add(`${month}:${d}`));
     if (remaining.length === 0) return;
 
-    const students = await getUnpaidStudents(month);
-    remaining.forEach(d => sentKeys.add(`${month}:${d}`));
+    const students = await getUnpaidStudents(user.id, month);
+    remaining.forEach(d => sentKeys.add(key(d)));
     if (students.length === 0) {
-      await db.logReminderRun(month, remaining, 0, 0);
+      await db.logReminderRun(user.id, month, remaining, 0, 0);
       return;
     }
-    await sendReminders(students, month, trigger, (results) => db.logReminderRun(month, remaining, results.sent, results.failed));
+    await sendReminders(user, students, month, trigger, (results) => db.logReminderRun(user.id, month, remaining, results.sent, results.failed));
   } catch (err) {
-    console.error('   ❌ Scheduled reminder error:', err.message);
+    console.error(`   ❌ Scheduled reminder error for ${user.email}:`, err.message);
   }
 }
 
-// Check every hour; runScheduledReminders makes sure each chosen day only sends once
-cron.schedule('1 * * * *', () => runScheduledReminders('schedule'), { timezone: TIMEZONE });
+/** Check every active customer, one at a time (WhatsApp browsers are opened one by one) */
+let scheduleRunning = false;
+async function runAllScheduledReminders(trigger) {
+  if (scheduleRunning) return;
+  scheduleRunning = true;
+  try {
+    const customers = (await db.listUsers('customer')).filter(c => c.active);
+    for (const customer of customers) await runScheduledReminders(customer, trigger);
+  } catch (err) {
+    console.error('❌ Reminder schedule error:', err.message);
+  } finally {
+    scheduleRunning = false;
+  }
+}
+
+// Check every hour; each chosen day is only ever sent once per customer
+cron.schedule('1 * * * *', () => runAllScheduledReminders('schedule'), { timezone: TIMEZONE });
+
+// Once a week, open each linked WhatsApp briefly so WhatsApp keeps the linked device active
+cron.schedule('30 4 * * 0', async () => {
+  const customers = (await db.listUsers('customer').catch(() => [])).filter(c => c.active);
+  for (const customer of customers) {
+    await whatsapp.keepAlive(customer.id).catch(err => console.error(`Keep-alive failed for ${customer.email}:`, err.message));
+  }
+}, { timezone: TIMEZONE });
+
+// When a customer links WhatsApp, send anything that was waiting for it
+whatsapp.setOnLinked(async (ownerId) => {
+  const user = await db.getUserById(ownerId).catch(() => null);
+  if (user?.active && user.role === 'customer') runScheduledReminders(user, 'whatsapp linked');
+});
 
 // ─── Helpers ───────────────────────────────────────────
 function nowInTimezone() {
@@ -345,17 +548,17 @@ if (process.env.RENDER_EXTERNAL_URL) {
 }
 
 // ─── Start Server ──────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`\n🚀 Student Fee Management System`);
+app.listen(PORT, async () => {
+  console.log(`\n🚀 Student Fee Reminders`);
   console.log(`   Server running at: http://localhost:${PORT}`);
-  console.log(`   Institution: ${INSTITUTION_NAME}`);
   console.log(`   Timezone: ${TIMEZONE}`);
-  if (!auth.enabled) {
-    console.log('   ⚠️  ADMIN_PASSWORD is not set — the dashboard is open to anyone with the URL');
+  console.log(`   Admins: ${auth.ADMIN_EMAILS.join(', ')}`);
+
+  try {
+    await auth.bootstrapAdmins();
+  } catch (err) {
+    console.error('\n❌ Could not set up accounts:', err.message);
+    console.error('   Run migrations/002_accounts.sql in Supabase → SQL Editor, then restart.\n');
   }
   console.log('');
-
-  // Initialize WhatsApp; whenever it connects, send any reminders that are still due
-  console.log('📱 Initializing WhatsApp...');
-  whatsapp.initWhatsApp(() => runScheduledReminders('whatsapp connected'));
 });

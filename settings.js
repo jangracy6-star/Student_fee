@@ -1,11 +1,11 @@
 /**
- * Settings Module — reminder schedule and message template
- * Stored as a JSON file in Supabase Storage so no database migration is needed.
+ * Settings Module — each customer's reminder schedule and message template
+ * Stored as one JSON file per customer in Supabase Storage (customers/<id>.json).
  */
 const { supabase } = require('./database');
 
 const BUCKET = 'app-settings';
-const FILE = 'settings.json';
+const fileFor = (ownerId) => `customers/${ownerId}.json`;
 
 const DEFAULT_TEMPLATE =
   '🎓 *Fee Reminder — {institution}*\n\n' +
@@ -15,12 +15,13 @@ const DEFAULT_TEMPLATE =
   'Thank you!\n— {institution}';
 
 const DEFAULTS = {
+  institutionName: '',   // empty = use the account name
   autoEnabled: true,
   reminderDays: [1],
   messageTemplate: DEFAULT_TEMPLATE
 };
 
-let cache = null;
+const cache = new Map(); // ownerId -> settings
 let bucketReady = null;
 
 function ensureBucket() {
@@ -37,27 +38,35 @@ function ensureBucket() {
   return bucketReady;
 }
 
-/** Current settings (cached after the first read) */
-async function getSettings() {
-  if (cache) return cache;
+/** A customer's settings (cached after the first read) */
+async function getSettings(ownerId) {
+  if (cache.has(ownerId)) return cache.get(ownerId);
+  let settings;
   try {
     await ensureBucket();
-    const { data, error } = await supabase.storage.from(BUCKET).download(FILE);
+    const { data, error } = await supabase.storage.from(BUCKET).download(fileFor(ownerId));
     if (error) throw error;
-    cache = { ...DEFAULTS, ...JSON.parse(await data.text()) };
+    settings = { ...DEFAULTS, ...JSON.parse(await data.text()) };
   } catch (err) {
-    // First run (no file yet) or storage unavailable — fall back to defaults
+    // New customer (no file yet) or storage unavailable — fall back to defaults
     if (!/not found|does not exist|404/i.test(err.message || '')) {
       console.error('⚠️  Could not read settings, using defaults:', err.message);
     }
-    cache = { ...DEFAULTS };
+    settings = { ...DEFAULTS };
   }
-  return cache;
+  cache.set(ownerId, settings);
+  return settings;
 }
 
 /** Validate and save; returns { settings } or { error } */
-async function saveSettings(input = {}) {
-  const next = { ...(await getSettings()) };
+async function saveSettings(ownerId, input = {}) {
+  const next = { ...(await getSettings(ownerId)) };
+
+  if (input.institutionName !== undefined) {
+    const name = String(input.institutionName).trim();
+    if (name.length > 100) return { error: 'Institute name is too long' };
+    next.institutionName = name;
+  }
 
   if (input.autoEnabled !== undefined) {
     if (typeof input.autoEnabled !== 'boolean') return { error: '"autoEnabled" must be true or false' };
@@ -81,11 +90,19 @@ async function saveSettings(input = {}) {
 
   await ensureBucket();
   const { error } = await supabase.storage.from(BUCKET)
-    .upload(FILE, JSON.stringify(next, null, 2), { upsert: true, contentType: 'application/json' });
+    .upload(fileFor(ownerId), JSON.stringify(next, null, 2), { upsert: true, contentType: 'application/json' });
   if (error) throw error;
 
-  cache = next;
+  cache.set(ownerId, next);
   return { settings: next };
 }
 
-module.exports = { DEFAULT_TEMPLATE, getSettings, saveSettings };
+/** Remove a customer's settings file (when their account is deleted) */
+async function deleteSettings(ownerId) {
+  cache.delete(ownerId);
+  await ensureBucket();
+  const { error } = await supabase.storage.from(BUCKET).remove([fileFor(ownerId)]);
+  if (error) throw error;
+}
+
+module.exports = { DEFAULT_TEMPLATE, getSettings, saveSettings, deleteSettings };

@@ -35,6 +35,10 @@
       <symbol id="i-trash" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></symbol>
       <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></symbol>
       <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
+      <symbol id="i-user" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></symbol>
+      <symbol id="i-mail" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="22 6 12 13 2 6"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></symbol>
       <symbol id="i-back" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></symbol>
       <symbol id="i-send" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></symbol>
       <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
@@ -44,19 +48,65 @@
 
   <div id="toast-container" aria-live="polite"></div>
 
-  <!-- ═══════ LOGIN (only when ADMIN_PASSWORD is set) ═══════ -->
+  <!-- ═══════ SIGN IN / REQUEST ACCESS ═══════ -->
   <div class="login-screen" id="login-screen" hidden>
-    <form class="login-card" id="login-form">
+    <div class="login-card">
       <span class="brand-mark brand-mark-lg"><svg class="i"><use href="#i-cap"/></svg></span>
-      <h1 class="login-title">Sign in</h1>
-      <p class="login-subtitle">Enter the admin password to continue</p>
-      <label class="field">
-        <span class="field-label">Password</span>
-        <input type="password" id="login-password" autocomplete="current-password" required />
-      </label>
-      <p class="form-error" id="login-error" hidden></p>
-      <button type="submit" class="btn btn-primary btn-block" id="btn-login">Continue</button>
-    </form>
+
+      <form id="auth-login" novalidate>
+        <h1 class="login-title">Sign in to FeeFlow</h1>
+        <p class="login-subtitle">Use the email and password we gave you</p>
+        <label class="field">
+          <span class="field-label">Email</span>
+          <input type="email" id="login-email" autocomplete="username" inputmode="email" autocapitalize="off" required />
+        </label>
+        <label class="field">
+          <span class="field-label">Password</span>
+          <span class="input-action">
+            <input type="password" id="login-password" autocomplete="current-password" required />
+            <button type="button" class="input-action-btn" data-action="toggle-password" data-target="login-password" aria-label="Show password"><svg class="i"><use href="#i-eye"/></svg></button>
+          </span>
+        </label>
+        <p class="form-error" id="login-error" hidden></p>
+        <div class="no-access" id="no-access" hidden>
+          <p><strong>This email doesn't have access yet.</strong> FeeFlow is available to customers who have bought it.</p>
+          <button type="button" class="btn btn-secondary btn-block" data-action="show-request">Request access</button>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block" id="btn-login">Sign in</button>
+        <p class="login-footer">Don't have an account? <button type="button" class="link-btn" data-action="show-request">Request access</button></p>
+      </form>
+
+      <form id="auth-request" novalidate hidden>
+        <h1 class="login-title">Request access</h1>
+        <p class="login-subtitle">Tell us who you are and we'll set up your account</p>
+        <label class="field">
+          <span class="field-label">Your name</span>
+          <input type="text" id="request-name" autocomplete="name" maxlength="100" required />
+        </label>
+        <label class="field">
+          <span class="field-label">Email</span>
+          <input type="email" id="request-email" autocomplete="email" inputmode="email" autocapitalize="off" required />
+        </label>
+        <label class="field">
+          <span class="field-label">Phone <span class="optional">optional</span></span>
+          <input type="tel" id="request-phone" autocomplete="tel" inputmode="tel" maxlength="20" />
+        </label>
+        <label class="field">
+          <span class="field-label">Institute or message <span class="optional">optional</span></span>
+          <textarea id="request-message" rows="3" maxlength="500" class="textarea-sm"></textarea>
+        </label>
+        <p class="form-error" id="request-error" hidden></p>
+        <button type="submit" class="btn btn-primary btn-block" id="btn-request">Send request</button>
+        <p class="login-footer"><button type="button" class="link-btn" data-action="show-login">Back to sign in</button></p>
+      </form>
+
+      <div id="auth-request-sent" hidden>
+        <svg class="i sent-icon"><use href="#i-check-circle"/></svg>
+        <h1 class="login-title">Request sent</h1>
+        <p class="login-subtitle" id="request-sent-text">We'll contact you when your account is ready.</p>
+        <button type="button" class="btn btn-secondary btn-block" data-action="show-login">Back to sign in</button>
+      </div>
+    </div>
   </div>
 
   <!-- ═══════ HEADER ═══════ -->
@@ -66,16 +116,17 @@
       <span class="brand-name" id="institution-name">Student Fees</span>
     </div>
     <div class="topbar-actions">
-      <button class="btn btn-icon btn-ghost" data-action="open-settings" title="Settings" aria-label="Settings">
+      <span class="admin-badge admin-only">Admin</span>
+      <button class="btn btn-icon btn-ghost customer-only" data-action="open-settings" title="Settings" aria-label="Settings">
         <svg class="i"><use href="#i-settings"/></svg>
       </button>
-      <button class="btn btn-icon btn-ghost" id="btn-logout" data-action="logout" title="Log out" aria-label="Log out" hidden>
-        <svg class="i"><use href="#i-logout"/></svg>
+      <button class="btn btn-icon btn-ghost admin-only" data-action="open-account" title="Account" aria-label="Account">
+        <svg class="i"><use href="#i-user"/></svg>
       </button>
     </div>
   </header>
 
-  <main class="page">
+  <main class="page customer-only" id="customer-page">
 
     <!-- WhatsApp / monthly reminder status -->
     <section class="notice" id="reminder-card">
@@ -130,6 +181,32 @@
     </div>
 
     <div id="students-list"></div>
+  </main>
+
+  <!-- ═══════ ADMIN ═══════ -->
+  <main class="page admin-only" id="admin-page">
+    <div class="page-head">
+      <div>
+        <h1 class="page-title" id="admin-title">Customers</h1>
+        <p class="page-subtitle" id="admin-subtitle">—</p>
+      </div>
+      <button class="btn btn-primary btn-add" data-action="add-customer">
+        <svg class="i"><use href="#i-plus"/></svg> Add<span class="desktop-only">&nbsp;customer</span>
+      </button>
+    </div>
+
+    <div class="toolbar">
+      <div class="segmented segmented-2" id="admin-tabs" role="tablist" aria-label="Admin sections">
+        <button class="segment active" data-tab="customers">Customers <span id="count-customers">0</span></button>
+        <button class="segment" data-tab="requests">Requests <span id="count-requests">0</span></button>
+      </div>
+      <label class="search" id="admin-search-bar">
+        <svg class="i"><use href="#i-search"/></svg>
+        <input type="search" placeholder="Search" id="admin-search" autocomplete="off" />
+      </label>
+    </div>
+
+    <div id="admin-list"></div>
   </main>
 
   <!-- ═══════ ADD / EDIT STUDENT ═══════ -->
@@ -190,6 +267,17 @@
 
       <div class="screen-body">
         <section class="group">
+          <h3 class="group-title">Institute</h3>
+          <div class="card">
+            <label class="field field-flush">
+              <span class="field-label">Institute name</span>
+              <input type="text" id="set-institution" maxlength="100" autocomplete="organization" placeholder="e.g., Bright Future Academy" />
+              <span class="field-hint">Shown at the top of the app and used for {institution} in the message</span>
+            </label>
+          </div>
+        </section>
+
+        <section class="group">
           <h3 class="group-title">WhatsApp</h3>
           <div class="card card-row">
             <span class="wa-state">
@@ -237,12 +325,153 @@
             <div class="bubble" id="message-preview"></div>
           </div>
         </section>
+
+        <section class="group">
+          <h3 class="group-title">Account</h3>
+          <div class="card list-card">
+            <div class="list-row">
+              <span class="list-row-label">Email</span>
+              <span class="list-row-value" id="set-account-email">—</span>
+            </div>
+            <button class="list-row list-row-btn" data-action="open-password">
+              <span class="list-row-label">Change password</span>
+              <svg class="i chevron"><use href="#i-back"/></svg>
+            </button>
+            <button class="list-row list-row-btn danger" data-action="logout">
+              <span class="list-row-label">Log out</span>
+            </button>
+          </div>
+        </section>
       </div>
 
       <footer class="screen-footer">
         <p class="form-error" id="settings-error" hidden></p>
         <button class="btn btn-primary btn-block" id="btn-save-settings" data-action="save-settings" disabled>Save changes</button>
       </footer>
+    </div>
+  </div>
+
+  <!-- ═══════ ADMIN: ADD / EDIT CUSTOMER ═══════ -->
+  <div class="sheet-overlay" id="customer-sheet" role="dialog" aria-modal="true" aria-labelledby="customer-sheet-title">
+    <div class="sheet">
+      <div class="sheet-handle"></div>
+      <div class="sheet-header">
+        <h3 id="customer-sheet-title">Add customer</h3>
+        <button class="sheet-close" data-action="close-sheet" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
+      </div>
+      <form id="customer-form" class="sheet-body" novalidate>
+        <input type="hidden" id="customer-id" />
+        <label class="field">
+          <span class="field-label">Name or institute</span>
+          <input type="text" id="customer-name" maxlength="100" autocomplete="off" placeholder="e.g., Bright Future Academy" required />
+        </label>
+        <label class="field">
+          <span class="field-label">Email</span>
+          <input type="email" id="customer-email" inputmode="email" autocapitalize="off" autocomplete="off" placeholder="customer@example.com" required />
+        </label>
+        <label class="field">
+          <span class="field-label" id="customer-password-label">Password</span>
+          <span class="input-action">
+            <input type="text" id="customer-password" autocomplete="new-password" autocapitalize="off" spellcheck="false" />
+            <button type="button" class="input-action-btn input-action-text" data-action="generate-password">Generate</button>
+          </span>
+          <span class="field-hint" id="customer-password-hint">At least 8 characters. You'll share it with the customer.</span>
+        </label>
+
+        <div class="card customer-meta" id="customer-meta" hidden>
+          <label class="switch-row">
+            <span class="switch-text">
+              <span>Access</span>
+              <small id="customer-access-text">Can sign in</small>
+            </span>
+            <input type="checkbox" class="switch" id="customer-active" />
+          </label>
+          <p class="meta-line" id="customer-meta-line"></p>
+        </div>
+
+        <p class="form-error" id="customer-error" hidden></p>
+        <div class="sheet-actions">
+          <button type="button" class="btn btn-danger-soft" data-action="delete-customer" id="btn-delete-customer" hidden>
+            <svg class="i"><use href="#i-trash"/></svg> Delete
+          </button>
+          <button type="button" class="btn btn-secondary" data-action="close-sheet">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="btn-save-customer">Add customer</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ═══════ ADMIN: LOGIN DETAILS TO SHARE ═══════ -->
+  <div class="sheet-overlay" id="credentials-sheet" role="dialog" aria-modal="true" aria-labelledby="credentials-title">
+    <div class="sheet sheet-narrow">
+      <div class="sheet-handle"></div>
+      <div class="sheet-body confirm-body">
+        <h3 id="credentials-title">Customer added</h3>
+        <p class="confirm-text">Send these sign-in details to the customer. The password won't be shown again.</p>
+        <pre class="credentials" id="credentials-text"></pre>
+        <div class="sheet-actions">
+          <button type="button" class="btn btn-secondary" data-action="close-sheet">Done</button>
+          <button type="button" class="btn btn-primary" data-action="copy-credentials"><svg class="i"><use href="#i-copy"/></svg> Copy</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════ ADMIN: ACCOUNT ═══════ -->
+  <div class="sheet-overlay" id="account-sheet" role="dialog" aria-modal="true" aria-labelledby="account-title">
+    <div class="sheet sheet-narrow">
+      <div class="sheet-handle"></div>
+      <div class="sheet-header">
+        <h3 id="account-title">Account</h3>
+        <button class="sheet-close" data-action="close-sheet" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="sheet-body">
+        <div class="card list-card">
+          <div class="list-row">
+            <span class="list-row-label">Signed in as</span>
+            <span class="list-row-value" id="account-email">—</span>
+          </div>
+          <button class="list-row list-row-btn" data-action="open-password">
+            <span class="list-row-label">Change password</span>
+            <svg class="i chevron"><use href="#i-back"/></svg>
+          </button>
+          <button class="list-row list-row-btn danger" data-action="logout">
+            <span class="list-row-label">Log out</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════ CHANGE PASSWORD ═══════ -->
+  <div class="sheet-overlay" id="password-sheet" role="dialog" aria-modal="true" aria-labelledby="password-title">
+    <div class="sheet sheet-narrow">
+      <div class="sheet-handle"></div>
+      <div class="sheet-header">
+        <h3 id="password-title">Change password</h3>
+        <button class="sheet-close" data-action="close-sheet" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
+      </div>
+      <form id="password-form" class="sheet-body" novalidate>
+        <input type="email" id="password-username" autocomplete="username" hidden />
+        <label class="field">
+          <span class="field-label">Current password</span>
+          <input type="password" id="password-current" autocomplete="current-password" required />
+        </label>
+        <label class="field">
+          <span class="field-label">New password</span>
+          <input type="password" id="password-new" autocomplete="new-password" minlength="8" required />
+          <span class="field-hint">At least 8 characters. Other devices will be signed out.</span>
+        </label>
+        <label class="field">
+          <span class="field-label">Confirm new password</span>
+          <input type="password" id="password-confirm" autocomplete="new-password" required />
+        </label>
+        <p class="form-error" id="password-error" hidden></p>
+        <div class="sheet-actions">
+          <button type="button" class="btn btn-secondary" data-action="close-sheet">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="btn-save-password">Update password</button>
+        </div>
+      </form>
     </div>
   </div>
 
@@ -284,5 +513,6 @@
   </div>
 
   <script src="js/app.js"></script>
+  <script src="js/admin.js"></script>
 </body>
 </html>

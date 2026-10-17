@@ -44,6 +44,12 @@ async function testConnection() {
       console.log('   ✅ fee_records table exists!');
     }
 
+    // Accounts tables (migrations/002_accounts.sql)
+    for (const table of ['app_users', 'access_requests']) {
+      const { error: accErr } = await supabase.from(table).select('count', { count: 'exact', head: true });
+      console.log(accErr ? `   ❌ ${table} table is missing — run migrations/002_accounts.sql` : `   ✅ ${table} table exists!`);
+    }
+
     // Test activity_log table
     const { error: logErr } = await supabase.from('activity_log').select('count', { count: 'exact', head: true });
     if (logErr) {

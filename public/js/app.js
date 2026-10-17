@@ -8,7 +8,8 @@ const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
 
 // ─── State ─────────────────────────────────────────────
 const state = {
-  config: { institution: 'Student Fees', authEnabled: false, currentMonth: null },
+  user: null,           // signed-in account { id, email, name, role }
+  config: { institution: 'Student Fees', currentMonth: null },
   students: [],
   filter: 'all', // 'all' | 'paid' | 'unpaid'
   studentsLoaded: false,
@@ -29,29 +30,43 @@ document.addEventListener('DOMContentLoaded', boot);
 
 async function boot() {
   bindEvents();
+  registerServiceWorker();
   try {
     const session = await fetch('/api/session').then(r => r.json());
-    if (session.authEnabled && !session.authenticated) return showLogin();
+    if (!session.authenticated) return showLogin();
+    state.user = session.user;
   } catch (err) {
-    // Server unreachable — still render the shell; API calls will show errors
+    return showLogin('login', 'Could not reach the server. Check your connection and try again.');
   }
   startApp();
 }
 
+/** Show the screens for the signed-in account's role */
 async function startApp() {
   $('login-screen').hidden = true;
+  document.body.dataset.role = state.user.role;
+
+  if (state.user.role === 'admin') {
+    $('institution-name').textContent = 'FeeFlow';
+    document.title = 'FeeFlow Admin';
+    startAdmin();
+    return;
+  }
+
   try {
     state.config = await api('/api/config');
   } catch (err) {
     // keep defaults
   }
-  $('institution-name').textContent = state.config.institution;
-  $('btn-logout').hidden = !state.config.authEnabled;
-  document.title = state.config.institution;
-
+  setInstitutionName(state.config.institution);
   loadStudents();
   startWhatsAppPolling();
-  registerServiceWorker();
+}
+
+function setInstitutionName(name) {
+  state.config.institution = name;
+  $('institution-name').textContent = name;
+  document.title = name;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -68,35 +83,110 @@ async function api(path, { method = 'GET', body } = {}) {
   try { data = await res.json(); } catch (err) { /* empty body */ }
 
   if (res.status === 401 && path !== '/api/login') {
-    showLogin();
-    throw new Error('Please log in');
+    showLogin('login', 'Your session has ended. Please sign in again.');
+    throw new Error('Please sign in');
   }
-  if (!res.ok) throw new Error(data?.error || `Request failed (${res.status})`);
+  if (!res.ok) {
+    const error = new Error(data?.error || `Request failed (${res.status})`);
+    error.code = data?.code;
+    throw error;
+  }
   return data;
 }
 
 // ═══════════════════════════════════════════════════════
-//  LOGIN
+//  SIGN IN / REQUEST ACCESS
 // ═══════════════════════════════════════════════════════
 
-function showLogin() {
+/** @param {'login'|'request'|'sent'} view */
+function showLogin(view = 'login', message = '') {
   clearInterval(waPollTimer);
   clearInterval(qrPollTimer);
   clearTimeout(reminderPollTimer);
+  while (sheetStack.length) hideTopSheet();
+  delete document.body.dataset.role;
   $('login-screen').hidden = false;
-  setTimeout(() => $('login-password').focus(), 50);
+  showAuthView(view);
+  if (message) {
+    $('login-error').textContent = message;
+    $('login-error').hidden = false;
+  }
+}
+
+function showAuthView(view) {
+  $('auth-login').hidden = view !== 'login';
+  $('auth-request').hidden = view !== 'request';
+  $('auth-request-sent').hidden = view !== 'sent';
+  $('login-error').hidden = true;
+  $('request-error').hidden = true;
+  if (view === 'login') {
+    $('no-access').hidden = true;
+    setTimeout(() => ($('login-email').value ? $('login-password') : $('login-email')).focus(), 50);
+  }
+  if (view === 'request') {
+    // Carry over the email they tried to sign in with
+    if (!$('request-email').value) $('request-email').value = $('login-email').value.trim();
+    setTimeout(() => $('request-name').focus(), 50);
+  }
 }
 
 async function handleLogin(event) {
   event.preventDefault();
   const btn = $('btn-login');
   const errorEl = $('login-error');
+  const email = $('login-email').value.trim();
+  const password = $('login-password').value;
   errorEl.hidden = true;
+  $('no-access').hidden = true;
+
+  if (!email || !password) {
+    errorEl.textContent = 'Enter your email and password';
+    errorEl.hidden = false;
+    return;
+  }
+
   setLoading(btn, true);
   try {
-    await api('/api/login', { method: 'POST', body: { password: $('login-password').value } });
+    const { user } = await api('/api/login', { method: 'POST', body: { email, password } });
     $('login-password').value = '';
+    state.user = user;
     startApp();
+  } catch (err) {
+    if (err.code === 'no_access') {
+      $('no-access').hidden = false;
+    } else {
+      errorEl.textContent = err.message;
+      errorEl.hidden = false;
+    }
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+async function handleAccessRequest(event) {
+  event.preventDefault();
+  const btn = $('btn-request');
+  const errorEl = $('request-error');
+  const body = {
+    name: $('request-name').value.trim(),
+    email: $('request-email').value.trim(),
+    phone: $('request-phone').value.trim(),
+    message: $('request-message').value.trim()
+  };
+  errorEl.hidden = true;
+
+  if (!body.name || !body.email) {
+    errorEl.textContent = 'Enter your name and email';
+    errorEl.hidden = false;
+    return;
+  }
+
+  setLoading(btn, true);
+  try {
+    await api('/api/access-requests', { method: 'POST', body });
+    $('request-sent-text').textContent = `Thanks, ${body.name}. We'll contact you at ${body.email} when your account is ready.`;
+    $('auth-request').reset();
+    showAuthView('sent');
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.hidden = false;
@@ -106,9 +196,64 @@ async function handleLogin(event) {
 }
 
 async function logout() {
-  if (!await confirmDialog({ title: 'Log out?', message: 'You will need the admin password to log back in.', confirmLabel: 'Log out' })) return;
+  if (!await confirmDialog({ title: 'Log out?', message: 'You can sign in again with your email and password.', confirmLabel: 'Log out' })) return;
   await api('/api/logout', { method: 'POST' }).catch(() => {});
+  state.user = null;
+  state.students = [];
+  state.studentsLoaded = false;
+  state.wa = { status: null };
+  state.reminders = null;
+  $('students-list').innerHTML = '';
   showLogin();
+}
+
+// ─── Change password (any account) ─────────────────────
+
+function openPasswordSheet() {
+  $('password-form').reset();
+  $('password-username').value = state.user?.email || '';
+  $('password-error').hidden = true;
+  openSheet('password-sheet');
+  if (matchMedia('(hover: hover)').matches) setTimeout(() => $('password-current').focus(), 150);
+}
+
+async function savePassword(event) {
+  event.preventDefault();
+  const errorEl = $('password-error');
+  const currentPassword = $('password-current').value;
+  const newPassword = $('password-new').value;
+  errorEl.hidden = true;
+
+  const problem = !currentPassword ? 'Enter your current password'
+    : newPassword.length < 8 ? 'New password must be at least 8 characters'
+    : newPassword !== $('password-confirm').value ? "The new passwords don't match"
+    : newPassword === currentPassword ? 'Choose a password different from your current one'
+    : null;
+  if (problem) {
+    errorEl.textContent = problem;
+    errorEl.hidden = false;
+    return;
+  }
+
+  const btn = $('btn-save-password');
+  setLoading(btn, true);
+  try {
+    await api('/api/account/password', { method: 'POST', body: { currentPassword, newPassword } });
+    await closeSheet();
+    showToast('Password updated', 'success');
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.hidden = false;
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+function togglePasswordVisibility(btn) {
+  const input = $(btn.dataset.target);
+  const show = input.type === 'password';
+  input.type = show ? 'text' : 'password';
+  btn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
 }
 
 // ═══════════════════════════════════════════════════════
@@ -174,7 +319,7 @@ function renderStudents() {
       <div class="empty">
         <svg class="i"><use href="#i-users"/></svg>
         <p>No students yet</p>
-        <small>Each student you add gets a WhatsApp fee reminder on the 1st of every month.</small>
+        <small>Each student you add gets a WhatsApp fee reminder on your chosen days every month.</small>
         <button class="btn btn-primary" data-action="add-student"><svg class="i"><use href="#i-plus"/></svg> Add student</button>
       </div>`;
     return;
@@ -382,7 +527,7 @@ function renderReminderCard() {
 
   card.classList.remove('is-on', 'is-off');
 
-  if (status === 'connected') {
+  if (isWhatsAppLinked(status)) {
     card.classList.add('is-on');
     if (info?.running) {
       title.textContent = 'Sending…';
@@ -397,7 +542,7 @@ function renderReminderCard() {
     setButton(btn, '<svg class="i"><use href="#i-send"/></svg>Send now', 'btn btn-sm btn-primary', 'send-now');
     btn.disabled = !!info?.running || (state.studentsLoaded && unpaid === 0);
     btn.title = unpaid === 0 ? 'Everyone has paid this month' : `Remind ${unpaid} unpaid student${unpaid === 1 ? '' : 's'} now`;
-  } else if (status === 'connecting') {
+  } else if (status === 'starting') {
     title.textContent = 'Connecting WhatsApp…';
     text.textContent = 'This can take up to a minute';
     setButton(btn, 'View', 'btn btn-sm btn-secondary', 'open-qr');
@@ -420,6 +565,11 @@ function renderReminderCard() {
   }
 
   renderSettingsWhatsApp();
+}
+
+/** Linked WhatsApp can send: either open right now or saved and opened on demand */
+function isWhatsAppLinked(status) {
+  return status === 'connected' || status === 'linked';
 }
 
 /** Update a button only when something changed, so a tap mid-refresh isn't lost */
@@ -480,10 +630,14 @@ async function openSettings() {
     return showToast(err.message || 'Could not load settings', 'error');
   }
   state.draft = {
+    institutionName: state.settings.institutionName || '',
     autoEnabled: state.settings.autoEnabled,
     reminderDays: [...state.settings.reminderDays],
     messageTemplate: state.settings.messageTemplate
   };
+  $('set-institution').value = state.draft.institutionName;
+  $('set-institution').placeholder = state.settings.account?.name || 'e.g., Bright Future Academy';
+  $('set-account-email').textContent = state.settings.account?.email || state.user?.email || '—';
   $('set-auto').checked = state.draft.autoEnabled;
   $('set-message').value = state.draft.messageTemplate;
   $('settings-error').hidden = true;
@@ -513,7 +667,8 @@ function renderSettingsState() {
   renderMessagePreview();
 
   const saved = state.settings;
-  const dirty = draft.autoEnabled !== saved.autoEnabled ||
+  const dirty = draft.institutionName.trim() !== (saved.institutionName || '') ||
+    draft.autoEnabled !== saved.autoEnabled ||
     draft.messageTemplate.trim() !== saved.messageTemplate ||
     draft.reminderDays.join() !== saved.reminderDays.join();
   $('btn-save-settings').disabled = !dirty || (draft.autoEnabled && days.length === 0) || !draft.messageTemplate.trim();
@@ -525,7 +680,7 @@ function renderMessagePreview() {
     name: sample.name,
     fee: formatMoney(sample.fee_amount),
     month: state.config.currentMonth ? formatMonth(state.config.currentMonth) : 'this month',
-    institution: state.settings?.institution || state.config.institution
+    institution: state.draft.institutionName.trim() || state.settings?.account?.name || state.config.institution
   };
   const filled = state.draft.messageTemplate.replace(/\{(name|fee|month|institution)\}/gi, (_, key) => values[key.toLowerCase()]);
   // Show WhatsApp-style formatting: *bold* and _italic_
@@ -538,10 +693,11 @@ function renderSettingsWhatsApp() {
   const status = state.wa.status;
   const dot = $('set-wa-dot');
   if (!dot) return;
-  dot.className = `dot ${status === 'connected' ? 'on' : status ? 'off' : ''}`;
-  $('set-wa-text').textContent = status === 'connected' ? 'Connected'
-    : status === 'connecting' ? 'Connecting…' : status ? 'Not connected' : 'Checking…';
-  $('set-wa-btn').textContent = status === 'connected' ? 'Manage' : 'Connect';
+  const linked = isWhatsAppLinked(status);
+  dot.className = `dot ${linked ? 'on' : status ? 'off' : ''}`;
+  $('set-wa-text').textContent = linked ? 'Linked'
+    : status === 'starting' ? 'Connecting…' : status ? 'Not linked' : 'Checking…';
+  $('set-wa-btn').textContent = linked ? 'Manage' : 'Connect';
 }
 
 function toggleDay(day) {
@@ -575,8 +731,15 @@ async function saveSettings() {
   try {
     const saved = await api('/api/settings', { method: 'PUT', body: state.draft });
     state.settings = { ...state.settings, ...saved };
-    state.draft = { ...saved, reminderDays: [...saved.reminderDays] };
+    state.draft = {
+      institutionName: saved.institutionName || '',
+      autoEnabled: saved.autoEnabled,
+      reminderDays: [...saved.reminderDays],
+      messageTemplate: saved.messageTemplate
+    };
     $('set-message').value = saved.messageTemplate;
+    $('set-institution').value = state.draft.institutionName;
+    setInstitutionName(saved.institution);
     showToast('Settings saved', 'success');
     loadReminderInfo();
   } catch (err) {
@@ -620,7 +783,7 @@ async function refreshQR() {
   const content = $('qr-content');
   try {
     const data = await api('/api/whatsapp/qr');
-    const connected = data.status === 'connected';
+    const connected = isWhatsAppLinked(data.status);
     $('qr-actions').hidden = !connected;
     $('qr-instructions').hidden = connected;
     $('qr-sheet-title').textContent = connected ? 'WhatsApp' : 'Connect WhatsApp';
@@ -633,15 +796,15 @@ async function refreshQR() {
       content.innerHTML = `
         <div class="qr-state">
           <svg class="i ok"><use href="#i-check-circle"/></svg>
-          <p>WhatsApp is connected</p>
-          <small>Reminders go out automatically on the 1st of every month.</small>
+          <p>WhatsApp is linked</p>
+          <small>Reminders are sent from this WhatsApp on the days you chose in Settings.</small>
         </div>`;
     } else {
       content.innerHTML = `
         <div class="qr-state">
           <div class="spinner"></div>
-          <p>${escapeHtml(data.message || 'Waiting for QR code…')}</p>
-          <small>This can take up to a minute after the server starts.</small>
+          <p>${escapeHtml(data.status === 'busy' ? 'Please wait a moment' : (data.message || 'Preparing your QR code…'))}</p>
+          <small>${escapeHtml(data.status === 'busy' ? data.message : 'This can take up to a minute.')}</small>
         </div>`;
     }
   } catch (err) {
@@ -772,13 +935,20 @@ function enableSheetDrag(overlay) {
 // ═══════════════════════════════════════════════════════
 
 function bindEvents() {
-  $('login-form').addEventListener('submit', handleLogin);
+  $('auth-login').addEventListener('submit', handleLogin);
+  $('auth-request').addEventListener('submit', handleAccessRequest);
+  $('password-form').addEventListener('submit', savePassword);
+  bindAdminEvents();
   $('student-form').addEventListener('submit', saveStudent);
   $('btn-confirm-ok').addEventListener('click', () => answerConfirm(true));
   $('btn-confirm-cancel').addEventListener('click', () => answerConfirm(false));
   $('student-search').addEventListener('input', renderStudents);
   $('set-message').addEventListener('input', (e) => {
     state.draft.messageTemplate = e.target.value;
+    renderSettingsState();
+  });
+  $('set-institution').addEventListener('input', (e) => {
+    state.draft.institutionName = e.target.value;
     renderSettingsState();
   });
   $('set-auto').addEventListener('change', (e) => {
@@ -839,6 +1009,11 @@ function bindEvents() {
       case 'save-settings': saveSettings(); break;
       case 'wa-logout': whatsappLogout(); break;
       case 'logout': logout(); break;
+      case 'show-request': showAuthView('request'); break;
+      case 'show-login': showAuthView('login'); break;
+      case 'toggle-password': togglePasswordVisibility(el); break;
+      case 'open-password': openPasswordSheet(); break;
+      default: handleAdminAction(el.dataset.action, el); break;
       case 'reload': loadStudents(); break;
     }
   });
