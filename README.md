@@ -65,6 +65,23 @@ Notes:
 - The app pings itself every 10 minutes so Render's free plan doesn't put it to sleep.
 - WhatsApp logins are saved in Supabase Storage (bucket `whatsapp-session`), so restarts don't need a new QR scan.
 
+## Android app
+
+`mobile/` is a Capacitor app that opens `https://student-fee-reminders.onrender.com` full screen with the FeeFlow icon, so it always shows the latest version of the site without reinstalling.
+
+Build a signed APK (needs the Android SDK and Java 21):
+
+```bash
+cd mobile
+npm install
+npx cap sync android
+cd android
+JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home ./gradlew assembleRelease
+# → android/app/build/outputs/apk/release/app-release.apk
+```
+
+Signing uses `mobile/keystore/feeflow-release.jks` and `mobile/android/keystore.properties`. Both are git-ignored and only exist on the computer that created them. Back them up: future updates must be signed with the same key. For each update, raise `versionCode` in `mobile/android/app/build.gradle`.
+
 ## How it works
 
 - **Accounts**: passwords are stored as scrypt hashes, never in plain text. Sessions are signed HttpOnly cookies valid for 30 days. Changing or resetting a password, or turning access off, signs that account out everywhere else. Repeated wrong passwords are locked out for 15 minutes.
@@ -86,4 +103,5 @@ settings.js       Each customer's institute name, reminder days and message; adm
 plans.js          Plan end dates, days left, student limits
 migrations/       SQL to run in Supabase
 public/           Frontend (index.html, css, js/app.js, js/admin.js, PWA)
+mobile/           Android app (Capacitor) that opens the site
 ```

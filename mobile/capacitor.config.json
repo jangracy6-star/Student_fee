@@ -1,0 +1,12 @@
+{
+  "appId": "com.dominova.feeflow",
+  "appName": "FeeFlow",
+  "webDir": "www",
+  "server": {
+    "url": "https://student-fee-reminders.onrender.com",
+    "cleartext": false
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}

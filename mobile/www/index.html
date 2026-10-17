@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FeeFlow</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; font-family: -apple-system, Roboto, sans-serif; background: #f6f6f7; color: #111215; text-align: center; padding: 24px; box-sizing: border-box; }
+    @media (prefers-color-scheme: dark) { body { background: #0c0d0f; color: #f1f2f4; } }
+    p { color: #8a8d95; }
+    button { margin-top: 16px; height: 44px; padding: 0 20px; border: 0; border-radius: 8px; background: #111215; color: #fff; font-size: 15px; }
+  </style>
+</head>
+<body>
+  <!-- Shown only if the app can't reach the FeeFlow server -->
+  <div>
+    <h1>FeeFlow</h1>
+    <p>Can't connect right now. Check your internet connection.</p>
+    <button onclick="location.href='https://student-fee-reminders.onrender.com'">Try again</button>
+  </div>
+</body>
+</html>

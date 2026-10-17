@@ -1,0 +1,17 @@
+{
+  "name": "feeflow-mobile",
+  "version": "1.0.0",
+  "private": true,
+  "description": "FeeFlow Android app — opens the FeeFlow web app full screen",
+  "scripts": {
+    "sync": "cap sync android",
+    "build:apk": "cd android && ./gradlew assembleRelease"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/core": "^8.5.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.3"
+  }
+}
