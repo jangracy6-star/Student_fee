@@ -372,7 +372,21 @@ api.get('/whatsapp/status', async (req, res) => {
 // Polled while the "Connect WhatsApp" screen is open; starts WhatsApp to show a QR code if needed
 api.get('/whatsapp/qr', async (req, res) => {
   try {
-    res.json(await whatsapp.getQR(req.user.id));
+    // ?mode=code: only report status (the customer is on the "link with code" option); default shows a QR code
+    res.json(await whatsapp.getQR(req.user.id, { start: req.query.mode !== 'code' }));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// Link with an 8-character code for this WhatsApp number (no QR scan needed)
+api.post('/whatsapp/pair', async (req, res) => {
+  try {
+    const digits = String(req.body?.phone || '').replace(/\D/g, '');
+    if (digits.length < 10 || digits.length > 15) {
+      return res.status(400).json({ error: 'Enter the WhatsApp number on this phone (10–15 digits)' });
+    }
+    res.json(await whatsapp.startPairing(req.user.id, digits));
   } catch (err) {
     sendError(res, err);
   }

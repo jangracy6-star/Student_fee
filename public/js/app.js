@@ -861,35 +861,64 @@ function joinWords(items) {
 
 // ─── QR Sheet ──────────────────────────────────────────
 
+// On phones, the customer usually has WhatsApp on this same device and can't scan their own
+// screen, so default to linking with a code. On computers, show the QR code.
+const IS_PHONE = matchMedia('(hover: none) and (pointer: coarse)').matches || /Android|iPhone|iPad/i.test(navigator.userAgent);
+let linkMode = IS_PHONE ? 'code' : 'qr';
+let pairRequested = false;
+
 function openQRSheet() {
   $('qr-content').innerHTML = '<div class="qr-state"><div class="spinner"></div><p>Checking connection…</p></div>';
+  pairRequested = false;
+  $('pair-error').hidden = true;
+  if (!$('pair-phone').value) $('pair-phone').value = state.settings?.account?.phone || '';
+  setLinkMode(linkMode, { refresh: false });
   openSheet('qr-sheet');
   refreshQR();
   clearInterval(qrPollTimer);
   qrPollTimer = setInterval(refreshQR, 3000);
 }
 
+function setLinkMode(mode, { refresh = true } = {}) {
+  linkMode = mode;
+  document.querySelectorAll('#link-tabs .segment').forEach(b => b.classList.toggle('active', b.dataset.linkMode === mode));
+  $('link-qr').hidden = mode !== 'qr';
+  $('link-code').hidden = mode !== 'code';
+  if (mode === 'qr') $('qr-content').innerHTML = '<div class="qr-state"><div class="spinner"></div><p>Preparing your QR code…</p></div>';
+  if (refresh) refreshQR();
+}
+
 async function refreshQR() {
   if (!$('qr-sheet').classList.contains('show')) return clearInterval(qrPollTimer);
   const content = $('qr-content');
   try {
-    const data = await api('/api/whatsapp/qr');
+    const data = await api(`/api/whatsapp/qr?mode=${linkMode}`);
     const connected = isWhatsAppLinked(data.status);
     $('qr-actions').hidden = !connected;
-    $('qr-instructions').hidden = connected;
+    $('link-tabs').hidden = connected;
     $('qr-sheet-title').textContent = connected ? 'WhatsApp' : 'Connect WhatsApp';
 
-    if (data.qr) {
-      const img = content.querySelector('img');
-      if (img) img.src = data.qr;
-      else content.innerHTML = `<img src="${data.qr}" alt="WhatsApp QR code" />`;
-    } else if (connected) {
+    if (connected) {
+      $('link-qr').hidden = false;
+      $('link-code').hidden = true;
+      $('qr-instructions').hidden = true;
+      document.querySelector('.link-hint').hidden = true;
       content.innerHTML = `
         <div class="qr-state">
           <svg class="i ok"><use href="#i-check-circle"/></svg>
           <p>WhatsApp is linked</p>
           <small>Reminders are sent from this WhatsApp on the days you chose in Settings.</small>
         </div>`;
+      return;
+    }
+    $('qr-instructions').hidden = false;
+    document.querySelector('.link-hint').hidden = false;
+    if (linkMode === 'code') return renderPairState(data);
+
+    if (data.qr) {
+      const img = content.querySelector('img');
+      if (img) img.src = data.qr;
+      else content.innerHTML = `<img src="${data.qr}" alt="WhatsApp QR code" />`;
     } else {
       content.innerHTML = `
         <div class="qr-state">
@@ -899,12 +928,82 @@ async function refreshQR() {
         </div>`;
     }
   } catch (err) {
-    content.innerHTML = `
-      <div class="qr-state">
-        <svg class="i warn"><use href="#i-alert"/></svg>
-        <p>Couldn't reach the server</p>
-        <small>${escapeHtml(err.message)}</small>
-      </div>`;
+    const message = `Couldn't reach the server: ${err.message}`;
+    if (linkMode === 'code') {
+      $('pair-error').textContent = message;
+      $('pair-error').hidden = false;
+    } else {
+      content.innerHTML = `
+        <div class="qr-state">
+          <svg class="i warn"><use href="#i-alert"/></svg>
+          <p>Couldn't reach the server</p>
+          <small>${escapeHtml(err.message)}</small>
+        </div>`;
+    }
+  }
+}
+
+/** Show the number form, the "getting your code" spinner, or the code itself */
+function renderPairState(data) {
+  const hasSession = data.pairPhone || data.pairingCode;
+  const waiting = pairRequested || (hasSession && data.status === 'starting');
+  $('pair-form').hidden = !!(data.pairingCode || waiting);
+  $('pair-result').hidden = !(data.pairingCode || waiting);
+  $('pair-ready').hidden = !data.pairingCode;
+  $('pair-waiting').hidden = !!data.pairingCode;
+
+  if (data.pairingCode) {
+    pairRequested = false;
+    const code = data.pairingCode.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+    $('pair-code').textContent = code.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
+  } else if (data.status === 'busy') {
+    $('pair-error').textContent = data.message;
+    $('pair-error').hidden = false;
+  } else if (!hasSession && !pairRequested && data.status === 'not_started') {
+    // The code expired (closed after a few minutes unused) — let them ask again
+    $('pair-form').hidden = false;
+    $('pair-result').hidden = true;
+  }
+}
+
+async function requestPairingCode(event) {
+  event.preventDefault();
+  const errorEl = $('pair-error');
+  const phone = $('pair-phone').value.trim();
+  errorEl.hidden = true;
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length < 10 || digits.length > 15) {
+    errorEl.textContent = 'Enter the WhatsApp number on this phone (10–15 digits)';
+    errorEl.hidden = false;
+    return;
+  }
+
+  const btn = $('btn-pair');
+  setLoading(btn, true);
+  try {
+    const data = await api('/api/whatsapp/pair', { method: 'POST', body: { phone } });
+    if (data.status === 'busy') {
+      errorEl.textContent = data.message;
+      errorEl.hidden = false;
+      return;
+    }
+    pairRequested = true;
+    renderPairState(data);
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.hidden = false;
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+async function copyPairCode() {
+  const code = $('pair-code').textContent.replace('-', '');
+  try {
+    await navigator.clipboard.writeText(code);
+    showToast('Code copied — paste it in WhatsApp', 'success');
+  } catch (err) {
+    showToast('Press and hold the code to copy it', 'info');
   }
 }
 
@@ -1029,6 +1128,8 @@ function bindEvents() {
   $('auth-login').addEventListener('submit', handleLogin);
   $('auth-request').addEventListener('submit', handleAccessRequest);
   $('password-form').addEventListener('submit', savePassword);
+  $('pair-form').addEventListener('submit', requestPairingCode);
+  document.querySelectorAll('#link-tabs .segment').forEach(b => b.addEventListener('click', () => setLinkMode(b.dataset.linkMode)));
   bindAdminEvents();
   $('student-form').addEventListener('submit', saveStudent);
   $('btn-confirm-ok').addEventListener('click', () => answerConfirm(true));
@@ -1097,6 +1198,13 @@ function bindEvents() {
       case 'toggle-paid': togglePaid(Number(el.dataset.id)); break;
       case 'close-sheet': closeSheet(); break;
       case 'open-qr': openQRSheet(); break;
+      case 'copy-pair-code': copyPairCode(); break;
+      case 'pair-change-number':
+        pairRequested = false;
+        $('pair-form').hidden = false;
+        $('pair-result').hidden = true;
+        $('pair-phone').focus();
+        break;
       case 'send-now': sendNow(); break;
       case 'open-settings': openSettings(); break;
       case 'close-settings': closeSettings(); break;

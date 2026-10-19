@@ -14,7 +14,7 @@ A clean, minimal, mobile-first product (light & dark mode) for tuition centres a
 - Add, edit and delete students (name, WhatsApp number, class, monthly fee).
 - Mark each student **Paid / Unpaid** for the current month, with Collected / Pending totals.
 - **Send now** reminds every unpaid student immediately.
-- **Settings**: institute name, link WhatsApp (scan a QR code once), choose reminder days (e.g. the 1st and 10th), edit the message (`{name}`, `{fee}`, `{month}`, `{institution}` are filled in for each student), and **Account** → change password or log out.
+- **Settings**: institute name, link WhatsApp once (scan a QR code from another screen, or, on the same phone as WhatsApp, enter an 8-character link code), choose reminder days (e.g. the 1st and 10th), edit the message (`{name}`, `{fee}`, `{month}`, `{institution}` are filled in for each student), and **Account** → change password or log out.
 
 **Anyone else** who signs in with an email that has no account sees *"This email doesn't have access yet"* and can **Request access**.
 

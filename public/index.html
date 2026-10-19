@@ -605,12 +605,56 @@
         <button class="sheet-close" data-action="close-sheet" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
       </div>
       <div class="sheet-body">
-        <div class="qr-content" id="qr-content"></div>
-        <ol class="steps" id="qr-instructions">
-          <li>Open <strong>WhatsApp</strong> on the phone that will send reminders</li>
-          <li>Go to <strong>Settings → Linked devices</strong></li>
-          <li>Tap <strong>Link a device</strong> and scan this code</li>
-        </ol>
+        <!-- How to link: scan a QR code from another screen, or type a code on this phone -->
+        <div class="segmented segmented-2 link-tabs" id="link-tabs" role="tablist" aria-label="How to link WhatsApp">
+          <button class="segment" data-link-mode="code">Use phone number</button>
+          <button class="segment" data-link-mode="qr">Scan QR code</button>
+        </div>
+
+        <div id="link-qr">
+          <div class="qr-content" id="qr-content"></div>
+          <ol class="steps" id="qr-instructions">
+            <li>Open <strong>WhatsApp</strong> on the phone that will send reminders</li>
+            <li>Go to <strong>Settings → Linked devices</strong></li>
+            <li>Tap <strong>Link a device</strong> and scan this code</li>
+          </ol>
+          <p class="link-hint">Using FeeFlow on that same phone? Choose <strong>Use phone number</strong> above instead.</p>
+        </div>
+
+        <div id="link-code" hidden>
+          <form id="pair-form" novalidate>
+            <label class="field">
+              <span class="field-label">Your WhatsApp number</span>
+              <input type="tel" id="pair-phone" inputmode="tel" autocomplete="tel" placeholder="98765 43210" />
+              <span class="field-hint">The number of the WhatsApp that will send reminders</span>
+            </label>
+            <p class="form-error" id="pair-error" hidden></p>
+            <button type="submit" class="btn btn-primary btn-block" id="btn-pair">Get link code</button>
+          </form>
+
+          <div class="pair-result" id="pair-result" hidden>
+            <div class="qr-state" id="pair-waiting">
+              <div class="spinner"></div>
+              <p>Getting your code…</p>
+              <small>This can take up to a minute.</small>
+            </div>
+            <div id="pair-ready" hidden>
+              <span class="field-label">Your link code</span>
+              <div class="pair-code" id="pair-code" aria-live="polite">—</div>
+              <div class="pair-buttons">
+                <button type="button" class="btn btn-secondary" data-action="copy-pair-code"><svg class="i"><use href="#i-copy"/></svg> Copy</button>
+                <a class="btn btn-primary" href="whatsapp://" id="open-whatsapp"><svg class="i"><use href="#i-whatsapp"/></svg> Open WhatsApp</a>
+              </div>
+              <ol class="steps">
+                <li>WhatsApp shows a notification <strong>"Enter code to link new device"</strong>. Tap it and enter this code.</li>
+                <li>No notification? In WhatsApp go to <strong>Settings → Linked devices → Link a device → Link with phone number instead</strong> and enter the code.</li>
+                <li>Come back here. This screen updates by itself once linked.</li>
+              </ol>
+              <button type="button" class="link-btn pair-change" data-action="pair-change-number">Use a different number</button>
+            </div>
+          </div>
+        </div>
+
         <div class="sheet-actions" id="qr-actions" hidden>
           <button type="button" class="btn btn-danger-soft" data-action="wa-logout">Unlink WhatsApp</button>
         </div>

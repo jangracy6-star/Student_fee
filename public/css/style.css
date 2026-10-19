@@ -1060,6 +1060,28 @@ body:not([data-role="customer"]) .customer-only { display: none !important; }
 .input-suffix input { padding-right: 56px; }
 .input-suffix > span { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--text-3); pointer-events: none; }
 
+/* ═══════ Link WhatsApp: QR or pairing code ═══════ */
+.link-tabs { margin-bottom: 16px; }
+.link-hint { margin-top: 12px; font-size: 13px; color: var(--text-3); text-align: center; }
+.pair-result { margin-top: 4px; }
+#pair-waiting { padding: 24px 0; }
+
+.pair-code {
+  margin: 4px 0 14px;
+  padding: 16px 8px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-align: center;
+  user-select: all;
+}
+
+.pair-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.pair-change { display: block; margin: 14px auto 0; }
+
 /* ═══════ Larger screens ═══════ */
 @media (min-width: 640px) {
   .topbar { padding: 0 24px; }

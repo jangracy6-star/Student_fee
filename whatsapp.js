@@ -48,13 +48,20 @@ async function isLinked(ownerId) {
 
 // ─── Live sessions ─────────────────────────────────────
 
-function startSession(ownerId) {
+/**
+ * @param {object} [options]
+ * @param {string} [options.pairPhone] - link with an 8-character code for this number instead of a QR code
+ *   (for customers using FeeFlow on the same phone as their WhatsApp, who can't scan their own screen)
+ */
+function startSession(ownerId, { pairPhone = null } = {}) {
   const session = {
     ownerId,
     client: null,
-    status: 'starting',          // 'starting' | 'qr_ready' | 'connected' | 'error'
-    message: 'Starting WhatsApp…',
+    status: 'starting',          // 'starting' | 'qr_ready' | 'code_ready' | 'connected' | 'error'
+    message: pairPhone ? 'Getting your link code…' : 'Starting WhatsApp…',
     qr: null,
+    pairPhone,
+    pairingCode: null,
     busy: 0,                     // sends in progress
     qrViewedAt: Date.now(),
     closeTimer: null,
@@ -69,6 +76,8 @@ function startSession(ownerId) {
       dataPath: DATA_PATH,
       backupSyncIntervalMs: 5 * 60 * 1000
     }),
+    // Pairing-code linking; WhatsApp also shows a notification on the phone to enter the code
+    pairWithPhoneNumber: pairPhone ? { phoneNumber: pairPhone, showNotification: true, intervalMs: 180000 } : undefined,
     puppeteer: {
       headless: true,
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
@@ -115,10 +124,20 @@ function startSession(ownerId) {
     scheduleClose(session);
   });
 
+  client.on('code', (code) => {
+    session.status = 'code_ready';
+    session.message = 'Enter this code in WhatsApp on your phone';
+    session.pairingCode = String(code);
+    linked.set(ownerId, false);
+    settle(new Error('WhatsApp is not linked. Open Settings → WhatsApp to link it.'));
+    scheduleClose(session);
+  });
+
   client.on('authenticated', () => {
     session.status = 'starting';
     session.message = 'Linked — loading chats…';
     session.qr = null;
+    session.pairingCode = null;
   });
 
   client.on('ready', () => {
@@ -166,7 +185,7 @@ function startSession(ownerId) {
 function scheduleClose(session) {
   clearTimeout(session.closeTimer);
   if (session.busy > 0) return;
-  const delay = session.status === 'qr_ready' || session.status === 'starting' ? QR_CLOSE_MS : IDLE_CLOSE_MS;
+  const delay = ['qr_ready', 'code_ready', 'starting'].includes(session.status) ? QR_CLOSE_MS : IDLE_CLOSE_MS;
   session.closeTimer = setTimeout(() => {
     if (session.busy === 0 && sessions.get(session.ownerId) === session) stopSession(session.ownerId);
   }, delay);
@@ -188,7 +207,7 @@ async function stopSession(ownerId) {
 async function freeSlot() {
   if (sessions.size < MAX_ACTIVE) return true;
   const idle = [...sessions.values()]
-    .filter(s => s.busy === 0 && !(s.status === 'qr_ready' && Date.now() - s.qrViewedAt < QR_CLOSE_MS))
+    .filter(s => s.busy === 0 && !(['qr_ready', 'code_ready'].includes(s.status) && Date.now() - s.qrViewedAt < QR_CLOSE_MS))
     .sort((a, b) => a.qrViewedAt - b.qrViewedAt)[0];
   if (!idle) return false;
   await stopSession(idle.ownerId);
@@ -250,21 +269,51 @@ async function getStatus(ownerId) {
  * Called while the customer is looking at the "Connect WhatsApp" screen.
  * Starts a browser to produce a QR code if the customer isn't linked yet.
  */
-async function getQR(ownerId) {
+async function getQR(ownerId, { start = true } = {}) {
   let session = sessions.get(ownerId);
+  // Switching from "link with code" back to the QR code: restart that browser in QR mode
+  if (session && start && session.pairPhone && session.busy === 0 && !['connected'].includes(session.status) && session.status !== 'starting') {
+    await stopSession(ownerId);
+    session = null;
+  }
   if (session) {
     session.qrViewedAt = Date.now();
     if (session.status !== 'connected') scheduleClose(session);
-    return { status: session.status, message: session.message, qr: session.qr };
+    return { status: session.status, message: session.message, qr: session.qr, pairingCode: session.pairingCode, pairPhone: session.pairPhone };
   }
 
   if (await isLinked(ownerId)) return { status: 'linked', message: 'WhatsApp is linked' };
+  if (!start) return { status: 'not_started', message: 'Not linked' };
 
   if (!(await freeSlot())) {
     return { status: 'busy', message: 'WhatsApp is busy sending for another account. This screen will retry automatically.' };
   }
   session = startSession(ownerId);
   return { status: session.status, message: session.message, qr: null };
+}
+
+/**
+ * Link with a code instead of a QR code. Restarts the customer's linking browser in
+ * pairing mode for `phone`; the code then appears via getQR() polling.
+ */
+async function startPairing(ownerId, phone) {
+  if (await isLinked(ownerId) && !sessions.has(ownerId)) return { status: 'linked', message: 'WhatsApp is linked' };
+
+  const pairPhone = normalizePhone(phone);
+  const existing = sessions.get(ownerId);
+  if (existing) {
+    if (existing.status === 'connected' || existing.busy > 0) {
+      return { status: existing.status, message: existing.message };
+    }
+    if (existing.pairPhone === pairPhone) return getQR(ownerId, { start: false }); // same number: keep the current code
+    await stopSession(ownerId); // switch from QR (or another number) to this number
+  }
+
+  if (!(await freeSlot())) {
+    return { status: 'busy', message: 'WhatsApp is busy sending for another account. This screen will retry automatically.' };
+  }
+  const session = startSession(ownerId, { pairPhone });
+  return { status: session.status, message: session.message, pairPhone };
 }
 
 /** Unlink this customer's WhatsApp (they'll need to scan a new QR code) */
@@ -378,6 +427,7 @@ module.exports = {
   setOnLinked,
   getStatus,
   getQR,
+  startPairing,
   logout,
   keepAlive,
   normalizePhone,

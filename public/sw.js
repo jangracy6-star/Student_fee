@@ -2,7 +2,7 @@
  * FeeFlow Service Worker — makes the app installable and lets the shell load offline.
  * Network-first: the latest version is always used when online; API data is never cached.
  */
-const CACHE = 'feeflow-v4';
+const CACHE = 'feeflow-v5';
 const SHELL = ['/', '/css/style.css', '/js/app.js', '/js/admin.js', '/manifest.webmanifest', '/icons/icon.svg', '/icons/icon-192.png'];
 
 self.addEventListener('install', (event) => {
